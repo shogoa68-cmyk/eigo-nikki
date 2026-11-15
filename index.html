@@ -140,7 +140,8 @@ function todayEssayHtml() {
   return `<div class="card"><div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px"><b>📖 ${label}の英文</b><span class="sub" style="text-align:right">${esc(e.title || '')}</span></div>
     <div class="read" style="font-size:17px;line-height:1.9;margin-top:10px">${esc(e.text).replace(/\n/g, '<br>')}</div>
     <div class="row" style="margin-top:12px"><button class="btn" onclick="speak(S.essays[0].text)">▶ 聴く</button><button class="btn ghost" onclick="speechSynthesis.cancel()">■ 止める</button></div>
-    <button class="btn sub" style="margin-top:8px" onclick="speechSynthesis.cancel();tab='read';session=null;openEssay(S.essays[0].id)">訳・単語・文法を見る</button></div>`;
+    <button class="btn sub" style="margin-top:8px" onclick="speechSynthesis.cancel();tab='read';session=null;openEssay(S.essays[0].id)">訳・単語・文法を見る</button>
+    <button class="btn ghost" style="margin-top:8px;${S.daily.read ? 'color:var(--main);border-color:var(--main)' : ''}" onclick="S.daily.read=!S.daily.read;save();render()">${S.daily.read ? '✓ 今日は読みました' : '今日は読んだ'}</button></div>`;
 }
 function vHome() {
   if (session) return vReview();

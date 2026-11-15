@@ -90,11 +90,12 @@ const KEY = 'eigo-app-v1';
 const todayStr = () => new Date().toLocaleDateString('sv-SE');
 function load() {
   try { const d = JSON.parse(localStorage.getItem(KEY)); if (d && d.cards) return d; } catch (e) {}
-  return { cards: [], settings: { cap: 8, rate: 0.9 }, daily: { date: todayStr(), done: 0 }, text: '', diaries: [], essays: [], essayId: null };
+  return { cards: [], settings: { cap: 8, rate: 0.9 }, daily: { date: todayStr(), done: 0 }, text: '', diaries: [], essays: [], essayId: null, autoState: { lastCheck: 0, files: {} }, notice: null };
 }
 let S = load();
 S.diaries = S.diaries || [];   // 前のバージョンのデータにも「日記」「英文」の置き場所を作る
 S.essays = S.essays || [];
+S.autoState = S.autoState || { lastCheck: 0, files: {} };
 function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { toast('保存できませんでした'); } }
 function rollDay() { if (S.daily.date !== todayStr()) { S.daily = { date: todayStr(), done: 0 }; save(); } }
 
@@ -121,7 +122,9 @@ const TABS = [['home', '🏠', 'ホーム'], ['diary', '📔', '日記'], ['read
 function go(t) { speechSynthesis.cancel(); tab = t; session = null; sheet = null; render(); window.scrollTo(0, 0); }
 function render() {
   rollDay();
-  $('#nav').innerHTML = TABS.map(([k, i, n]) => `<button class="${tab === k ? 'on' : ''}" onclick="go('${k}')"><b>${i}</b>${n}</button>`).join('');
+  if (tab === 'read' && S.notice && !S.notice.seen) { S.notice.seen = true; save(); }   // 読む画面を開いたら既読
+  const dot = S.notice && !S.notice.seen ? '<span style="color:#d33;font-size:11px;position:absolute;margin-left:2px">●</span>' : '';
+  $('#nav').innerHTML = TABS.map(([k, i, n]) => `<button class="${tab === k ? 'on' : ''}" onclick="go('${k}')"><b>${i}${k === 'read' ? dot : ''}</b>${n}</button>`).join('');
   ({ home: vHome, diary: vDiary, read: vRead, words: vWords, set: vSet })[tab]();
 }
 
@@ -136,7 +139,7 @@ function vHome() {
   else if (n > 0) body = `<div class="big">${n}語</div><p class="center sub">今日のおさらい</p><button class="btn" onclick="startReview()">はじめる</button>`;
   else body = `<div class="big">✓</div><p class="center">今日はおしまい。おつかれさま！</p>
     <button class="btn ghost" onclick="S.daily.done=Math.max(0,S.daily.done-5);save();render()" ${dueCards().length ? '' : 'disabled'}>もう少しやる（+5語）</button>`;
-  $('#app').innerHTML = `<h1>マイ英語</h1><div class="card">${body}</div>
+  $('#app').innerHTML = `<h1>マイ英語</h1>${noticeHtml()}<div class="card">${body}</div>
     <div class="card"><div class="sub">集めた単語</div><div style="font-size:24px">${S.cards.length}語</div></div>`;
 }
 function startReview() {
@@ -277,14 +280,14 @@ function preloadGoogle() {
   if (gReady || _sc.loading) return; _sc.loading = true;
   loadScript('https://accounts.google.com/gsi/client').then(() => { gReady = true; if (tab === 'diary') render(); }).catch(() => { _sc.loading = false; });
 }
-function getToken(cid) {
+function getToken(cid, silent) {
   return new Promise((ok, ng) => {
     if (gTok && Date.now() < gTokExp - 60000) return ok(gTok);
     google.accounts.oauth2.initTokenClient({
       client_id: cid, scope: 'https://www.googleapis.com/auth/drive.readonly',
       callback: r => { if (r.error) return ng(new Error(r.error)); gTok = r.access_token; gTokExp = Date.now() + (r.expires_in || 3600) * 1000; ok(gTok); },
       error_callback: e => ng(new Error(e.type || 'ログインが中止されました'))
-    }).requestAccessToken();
+    }).requestAccessToken(silent ? { prompt: '' } : {});
   });
 }
 let dv = null;   // ドライブの一覧画面の状態 { items, q, sel, busy }
@@ -314,11 +317,7 @@ async function importSelected() {
   const files = Object.values(dv.sel); let n = 0;
   for (const f of files) {
     try {
-      const isDoc = f.mimeType === 'application/vnd.google-apps.document';   // Googleドキュメントは文字に変換して取る
-      const url = 'https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(f.id) + (isDoc ? '/export?mimeType=text/plain' : '?alt=media');
-      const r = await fetch(url, { headers: { Authorization: 'Bearer ' + gTok } });
-      if (!r.ok) throw new Error(r.status);
-      addDiary(f.id, f.name, (await r.text()).replace(/^﻿/, '').trim(), f.modifiedTime);
+      addDiary(f.id, f.name, await driveText(f), f.modifiedTime);
       n++;
     } catch (e) { toast('「' + f.name + '」を読めませんでした'); }
   }
@@ -329,6 +328,7 @@ function addDiary(id, name, text, mod) {
   const d = { id, name, text, modified: mod || 0, importedAt: Date.now() };
   const i = S.diaries.findIndex(x => x.id === id);
   if (i >= 0) S.diaries[i] = d; else S.diaries.unshift(d);   // 同じファイルをもう一度選ぶと、最新の内容に入れ替え
+  return d;
 }
 
 /* ---------- 日記 ---------- */
@@ -343,7 +343,7 @@ function vDiary() {
       ${openDiaryId === d.id ? `<div class="pre">${esc(d.text)}</div><button class="btn ghost" style="margin-top:8px" onclick="openDiaryId=null;render()">とじる</button>`
         : `<div class="sub" style="margin-top:4px">${esc(d.text.slice(0, 50))}${d.text.length > 50 ? '…' : ''}</div><button class="btn ghost" style="margin-top:8px;padding:8px" onclick="openDiaryId='${d.id}';render()">全文を見る</button>`}
     </div>`).join('');
-  $('#app').innerHTML = `<h1>日記</h1>
+  $('#app').innerHTML = `<h1>日記</h1>${S.autoState.status ? `<p class="sub" style="margin:-8px 0 12px">自動読み込み：${esc(S.autoState.status)}</p>` : ''}
   ${dv ? driveHtml() : `<div class="card"><b>Googleドライブから取り込む</b>
     <p class="sub">Googleにログインして、ドライブの中から日記（Googleドキュメントやテキスト）を選びます。アプリは読むだけで、ファイルを書き換えたり消したりはしません。</p>
     <button class="btn" onclick="pickDiary()">${ok ? (gReady ? 'ドライブから選ぶ' : '準備しています…') : '設定を開く（クライアントIDが必要です）'}</button></div>`}
@@ -376,11 +376,9 @@ const DEFAULT_MODEL = 'claude-haiku-5-5';
 const LEVELS = { mid: '中学生レベル（やさしい）', hs: '高校生レベル（ふつう）', up: '少し難しい（大学入試レベル）' };
 const LEVEL_EN = { mid: 'Japanese junior-high-school level (CEFR A2-B1)', hs: 'Japanese high-school level (CEFR B1-B2)', up: 'university-entrance-exam level (CEFR B2-C1)' };
 let gen = null;   // いま英文をつくっている日記のid
-async function makeEssay(id) {
+// 英文をつくって保存する（画面は動かさない部品）。select=true なら、読む画面にその英文をセットする
+async function generateEssay(d, select) {
   const c = gcfg();
-  if (!c.ak) { toast('先に設定でClaudeのAPIキーを入れてください'); return go('set'); }
-  const d = S.diaries.find(x => x.id === id); if (!d || gen) return;
-  gen = id; render();
   const due = dueCards().slice(0, 4).map(x => x.word);   // おさらい間近の単語を、英文にこっそり混ぜる
   const prompt = 'Here is my diary in Japanese. Write an English essay based on its content: about 10 sentences, first person, natural and warm, in my voice.\n'
     + 'Level: ' + LEVEL_EN[c.level || 'hs'] + '. About 2-5% of the words should be new or unfamiliar at this level; everything else should be easy to read.\n'
@@ -390,33 +388,142 @@ async function makeEssay(id) {
     + 'Reply with JSON only (no code fences), in this shape:\n'
     + '{"title":"short English title","essay":"the essay; separate paragraphs with a blank line","words":[{"word":"lowercase word or phrase exactly as it appears in the essay","meaning":"短い日本語の意味","example":"the sentence from the essay that contains it"}]}\n'
     + 'Diary:\n<diary>\n' + d.text.slice(0, 6000) + '\n</diary>';
-  try {
-    const r = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-api-key': c.ak, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-      body: JSON.stringify({ model: c.model || DEFAULT_MODEL, max_tokens: 2500,
-        system: 'You are a friendly English tutor for a Japanese adult learner. Reply with valid JSON only.',
-        messages: [{ role: 'user', content: prompt }] })
-    });
-    const j = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(r.status === 401 ? 'APIキーが正しくない、または期限切れです' : r.status === 429 ? 'しばらく待ってもう一度（使用量の上限）' : (j.error && j.error.message) || r.status);
-    const raw = (j.content || []).map(b => b.text || '').join('');
-    const o = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1));
-    if (!o.essay) throw new Error('英文が返ってきませんでした');
-    const known = new Set(S.cards.map(x => x.word));
-    const words = (o.words || []).filter(w => w.word && w.meaning && !known.has(String(w.word).toLowerCase()))
-      .map(w => ({ word: String(w.word), meaning: String(w.meaning), example: String(w.example || ''), added: false }));
-    if (S.settings.auto !== false) words.forEach(w => { addWordCard(w); w.added = true; });   // 設定がオンなら、自動で単語帳へ
-    const e = { id: 'e' + Date.now(), diaryId: d.id, diaryName: d.name, title: o.title || '', text: o.essay, createdAt: Date.now(), words };
-    S.essays.unshift(e); S.essays = S.essays.slice(0, 50);   // 保存（新しい順・50件まで）
-    S.essayId = e.id; S.text = e.text;
-    save(); gen = null;
-    const n = words.filter(w => w.added).length;
-    toast(n ? '英文ができて、' + n + '語を単語帳に入れました' : '英文ができました'); go('read');
-  } catch (e) {
-    gen = null; toast('つくれませんでした：' + e.message); if (tab === 'diary') render();
-  }
+  const r = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-api-key': c.ak, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+    body: JSON.stringify({ model: c.model || DEFAULT_MODEL, max_tokens: 2500,
+      system: 'You are a friendly English tutor for a Japanese adult learner. Reply with valid JSON only.',
+      messages: [{ role: 'user', content: prompt }] })
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(r.status === 401 ? 'APIキーが正しくない、または期限切れです' : r.status === 429 ? 'しばらく待ってもう一度（使用量の上限）' : (j.error && j.error.message) || r.status);
+  const raw = (j.content || []).map(b => b.text || '').join('');
+  const o = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1));
+  if (!o.essay) throw new Error('英文が返ってきませんでした');
+  const known = new Set(S.cards.map(x => x.word));
+  const words = (o.words || []).filter(w => w.word && w.meaning && !known.has(String(w.word).toLowerCase()))
+    .map(w => ({ word: String(w.word), meaning: String(w.meaning), example: String(w.example || ''), added: false }));
+  if (S.settings.auto !== false) words.forEach(w => { addWordCard(w); w.added = true; });   // 設定がオンなら、自動で単語帳へ
+  const e = { id: 'e' + Date.now(), diaryId: d.id, diaryName: d.name, title: o.title || '', text: o.essay, createdAt: Date.now(), words };
+  S.essays.unshift(e); S.essays = S.essays.slice(0, 50);   // 保存（新しい順・50件まで）
+  if (select) { S.essayId = e.id; S.text = e.text; }
+  save(); return e;
 }
+async function makeEssay(id) {
+  const c = gcfg();
+  if (!c.ak) { toast('先に設定でClaudeのAPIキーを入れてください'); return go('set'); }
+  const d = S.diaries.find(x => x.id === id); if (!d || gen) return;
+  gen = id; render();
+  try {
+    const e = await generateEssay(d, true); gen = null;
+    const n = e.words.filter(w => w.added).length;
+    toast(n ? '英文ができて、' + n + '語を単語帳に入れました' : '英文ができました'); go('read');
+  } catch (e) { gen = null; toast('つくれませんでした：' + e.message); if (tab === 'diary') render(); }
+}
+
+/* ---------- 日記の自動読み込み（アプリを開いたとき、フォルダの更新を見つけて英文までつくる） ---------- */
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+function folderId(v) { v = (v || '').trim(); const m = v.match(/folders\/([\w-]+)/); return m ? m[1] : v; }
+async function driveText(f) {
+  const isDoc = f.mimeType === 'application/vnd.google-apps.document';   // Googleドキュメントは文字に変換して取る
+  const url = 'https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(f.id) + (isDoc ? '/export?mimeType=text/plain' : '?alt=media');
+  const r = await fetch(url, { headers: { Authorization: 'Bearer ' + gTok } });
+  if (!r.ok) throw new Error(r.status);
+  return (await r.text()).replace(/^﻿/, '').trim();
+}
+// 前回の全文は、この端末だけに保存（バックアップには入れない）
+const SNAPKEY = 'eigo-snap-v1';
+function loadSnaps() { try { return JSON.parse(localStorage.getItem(SNAPKEY)) || {}; } catch (e) { return {}; } }
+function saveSnaps(o) { try { localStorage.setItem(SNAPKEY, JSON.stringify(o)); } catch (e) { try { localStorage.removeItem(SNAPKEY); } catch (e2) {} } }
+// 前回の文章(old)と今回の文章(nw)を見くらべて、増えた部分だけを取り出す。誤字直しのような小さな変更は無視する
+function diffNew(old, nw) {
+  if (nw.startsWith(old)) return nw.slice(old.length).trim().length >= 20 ? nw.slice(old.length).trim() : '';                    // 下に書き足した
+  if (nw.endsWith(old)) { const h = nw.slice(0, nw.length - old.length).trim(); return h.length >= 20 ? h : ''; }               // 上に書き足した
+  let p = 0; const m = Math.min(old.length, nw.length);
+  while (p < m && old[p] === nw[p]) p++;
+  let s = 0; while (s < m - p && old[old.length - 1 - s] === nw[nw.length - 1 - s]) s++;
+  const end = nw.length - s;
+  if (nw.slice(p, end).trim().length < 20) return '';                                  // 変わったのが20文字未満なら、新しい日記ではない
+  const a = nw.lastIndexOf('\n', p - 1) + 1, e = nw.indexOf('\n', end);                  // 行の区切りまで広げる
+  return nw.slice(a, e < 0 ? nw.length : e).trim();
+}
+// 初回用：前日の日付の見出し（2026/11/14、11月14日、11/14 など）から、次の日付の見出しまでを取り出す
+function yesterdaySection(text) {
+  const t = new Date(Date.now() - 864e5), y = t.getFullYear(), m = t.getMonth() + 1, d = t.getDate();
+  const pats = [new RegExp(y + '[/.\\-年]\\s*0?' + m + '[/.\\-月]\\s*0?' + d + '(?!\\d)'), new RegExp('(^|[^\\d])0?' + m + '月\\s*0?' + d + '日'), new RegExp('(^|[^\\d/])0?' + m + '/0?' + d + '(?![\\d/])')];
+  const isHead = l => l.length < 40 && /(\d{4}[\/.\-年]\s*\d{1,2}[\/.\-月]\s*\d{1,2})|(\d{1,2}月\s*\d{1,2}日)|(^\s*\d{1,2}\/\d{1,2}(?![\d/]))/.test(l);
+  const lines = text.split('\n'), i = lines.findIndex(l => l.length < 40 && pats.some(p => p.test(l)));
+  if (i < 0) return '';
+  let j = i + 1; while (j < lines.length && !isHead(lines[j])) j++;
+  return lines.slice(i, j).join('\n').trim();
+}
+let autoBusy = false;
+function autoStatus(msg, needTap) { const A = S.autoState; A.status = new Date().toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' }) + ' ' + msg; A.needTap = !!needTap; save(); if (tab === 'home' || tab === 'diary' || tab === 'set') render(); }
+async function autoDiary(manual) {
+  const c = gcfg(), A = S.autoState;
+  if (autoBusy || gen || !c.cid || !c.folder) { if (manual) toast('設定でクライアントIDと日記フォルダを入れてください'); return; }
+  if (!manual && (c.autod !== '1' || Date.now() - (A.lastCheck || 0) < 20 * 60 * 1000)) return;   // 自動は20分に1回まで
+  autoBusy = true;
+  try {
+    preloadGoogle(); for (let i = 0; i < 50 && !gReady; i++) await sleep(200);
+    if (!gReady) return autoStatus('Googleの部品を読み込めませんでした', false);
+    try { await Promise.race([getToken(c.cid, !manual), sleep(20000).then(() => { throw new Error('時間切れ'); })]); }
+    catch (e) { return autoStatus('Googleのログインが必要です', true); }   // 自動で開けなかったら、タップしてもらう
+    const kinds = "(mimeType='application/vnd.google-apps.document' or mimeType='text/plain' or mimeType='text/markdown')";
+    const q = "'" + c.folder + "' in parents and trashed=false and " + kinds;
+    const r = await fetch('https://www.googleapis.com/drive/v3/files?pageSize=10&orderBy=modifiedTime%20desc&fields=files(id,name,mimeType,modifiedTime)&q=' + encodeURIComponent(q), { headers: { Authorization: 'Bearer ' + gTok } });
+    if (r.status === 401) { gTok = null; return autoStatus('ログインの期限切れです', true); }
+    if (!r.ok) throw new Error('フォルダを読めません（' + r.status + '）');
+    let made = 0, baseline = 0, imported = 0, lastErr = ''; const snaps = loadSnaps();
+    for (const f of (await r.json()).files || []) {
+      const st = A.files[f.id];
+      if (st && st.mod === f.modifiedTime) continue;                       // 更新なし
+      const recent = Date.now() - new Date(f.modifiedTime) < 2 * 864e5;
+      if (!st && !recent) { A.files[f.id] = { mod: f.modifiedTime }; continue; }   // 古いファイルは、読まずに印だけ
+      const text = await driveText(f);
+      const old = snaps[f.id];
+      const part = old != null ? diffNew(old, text) : yesterdaySection(text);   // 前回の全文があれば見くらべ、なければ前日の見出しを探す
+      A.files[f.id] = { mod: f.modifiedTime };
+      if (text.length <= 400000) snaps[f.id] = text; else delete snaps[f.id];
+      if (part.length < 20) { if (old == null) baseline++; continue; }    // 新しい日記が見つからなければ、何もしない
+      const d = addDiary('auto-' + f.id + '-' + todayStr(), f.name + '（' + todayStr() + '）', part, f.modifiedTime); imported++;
+      if (!c.ak) continue;
+      try {
+        const e = await generateEssay(d, false); made++;
+        S.notice = { text: '日記から英文ができました（' + (e.title || f.name) + '）', essayId: e.id, seen: false };
+        notifyUser('マイ英語', '日記から英文ができました。単語' + e.words.filter(w => w.added).length + '語を単語帳に入れました。');
+      } catch (er) { lastErr = er.message; if (old != null) snaps[f.id] = old; else delete snaps[f.id]; if (st) A.files[f.id] = st; else delete A.files[f.id]; }   // 英文づくりに失敗したら、次回やり直せるよう元に戻す
+      if (made >= 2) break;
+    }
+    saveSnaps(snaps); A.lastCheck = Date.now();
+    autoStatus(lastErr ? '英文をつくれませんでした：' + lastErr
+      : made ? made + '件の英文をつくりました' : imported ? '日記を取り込みました（APIキー未設定のため英文は未作成）'
+      : baseline ? '日記フォルダの基準を記録しました。次に更新されたら自動で読み込みます' : '新しい日記はありませんでした', false);
+    if (manual) toast(S.autoState.status.replace(/^[^ ]+ [^ ]+ /, ''));
+  } catch (e) { autoStatus('確認できませんでした：' + e.message, false); }
+  finally { autoBusy = false; }
+}
+// 通知：アプリが開いているあいだ、端末の通知でも知らせる（許可されているとき）
+function notifyUser(title, body) {
+  toast(body);
+  try {
+    if (!('Notification' in window) || Notification.permission !== 'granted') return;
+    navigator.serviceWorker.getRegistration().then(r => r ? r.showNotification(title, { body, icon: 'icon.svg', tag: 'eigo-new' }) : new Notification(title, { body })).catch(() => {});
+  } catch (e) {}
+}
+function askNotify() {
+  if (!('Notification' in window)) return toast('この端末は通知に未対応です');
+  Notification.requestPermission().then(p => { toast(p === 'granted' ? '通知を許可しました' : '通知は許可されませんでした'); render(); });
+}
+function noticeHtml() {
+  const n = S.notice, A = S.autoState; let h = '';
+  if (n && !n.seen) h += `<div class="card" style="background:var(--main2);border-color:var(--main)"><b>🎉 新しい英文</b><p style="margin:6px 0 10px">${esc(n.text)}</p>
+    <div class="row"><button class="btn" onclick="openNotice()">読む</button><button class="btn ghost" onclick="S.notice.seen=true;save();render()">あとで</button></div></div>`;
+  if (A.needTap) h += `<div class="card"><b>📔 日記の確認</b><p class="sub">Googleのログインが必要です。タップして、フォルダの日記を確認します。</p><button class="btn sub" onclick="autoDiary(true)">日記を確認する</button></div>`;
+  return h;
+}
+function openNotice() { const n = S.notice; n.seen = true; tab = 'read'; session = null; openEssay(n.essayId); }
+
 /* ---- 保存した英文 と 単語帳への自動追加 ---- */
 function curEssay() { return (S.essays || []).find(e => e.id === S.essayId) || null; }
 function candHtml() {
@@ -460,6 +567,11 @@ function vSet() {
       <li>「OAuth同意画面」（Google Auth Platform）を設定：種類は「外部」、テストユーザーに<b>自分のGmail</b>を追加、スコープは <b>drive.readonly</b>（ドライブの読み取り）</li>
       <li>「認証情報」→「OAuthクライアントID」→ 種類は<b>ウェブアプリ</b>。承認済みのJavaScript生成元に、このアプリのURLの「https://…github.io」の部分（/eigo-nikki は付けない）を入れる → できたIDを上の欄に</li></ol>
       <p class="sub">ログインのとき「このアプリは確認されていません」と出ますが、自分で作ったアプリなので「詳細」→「（アプリ名）に移動」で進めます。</p></details></div>
+  <div class="card"><b>日記の自動読み込み</b><p class="sub">アプリを開いたとき、日記フォルダの更新を見つけて、新しい部分から英文までつくります。新しい日記が見つからないときは、何もしません。</p>
+    <label style="display:flex;gap:8px;align-items:center;color:var(--ink);font-size:15px"><input type="checkbox" style="width:auto" ${g.autod === '1' ? 'checked' : ''} onchange="gset('autod',this.checked?'1':'0')">アプリを開いたとき、自動で確認する</label>
+    <label>日記フォルダ（フォルダのURLを貼り付け）</label><input value="${esc(g.folder || '')}" onchange="this.value=folderId(this.value);gset('folder',this.value)" autocapitalize="off" spellcheck="false" placeholder="https://drive.google.com/drive/folders/...">
+    <div class="row" style="margin-top:10px"><button class="btn sub" onclick="autoDiary(true)">今すぐ確認</button><button class="btn sub" onclick="askNotify()">${'Notification' in window && Notification.permission === 'granted' ? '通知：許可ずみ' : '通知を許可する'}</button></div>
+    <p class="sub">${esc(S.autoState.status || '')}</p></div>
   <div class="card"><b>Claude（英文づくり）</b><p class="sub">日記の文章がClaude APIに送られて、英文になります。キーはこの端末の中だけに保存され、バックアップには入りません。</p>
     <label>APIキー</label><input type="password" value="${esc(g.ak || '')}" onchange="gset('ak',this.value)" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="sk-ant-...">
     <label>使うモデル</label><select onchange="gset('model',this.value)" style="width:100%;font-size:16px;padding:10px;border:1px solid var(--line);border-radius:10px;background:#fff">${Object.entries(MODELS).map(([k, v]) => `<option value="${k}" ${(g.model || DEFAULT_MODEL) === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
@@ -476,11 +588,13 @@ function exportData() {
 }
 function importData(f) {
   if (!f) return; const r = new FileReader();
-  r.onload = () => { try { const d = JSON.parse(r.result); if (!d.cards) throw 0; S = d; S.diaries = S.diaries || []; S.essays = S.essays || []; save(); toast('読み込みました'); render(); } catch (e) { toast('読み込めませんでした'); } };
+  r.onload = () => { try { const d = JSON.parse(r.result); if (!d.cards) throw 0; S = d; S.diaries = S.diaries || []; S.essays = S.essays || []; S.autoState = S.autoState || { lastCheck: 0, files: {} }; save(); toast('読み込みました'); render(); } catch (e) { toast('読み込めませんでした'); } };
   r.readAsText(f);
 }
 
 render();
+setTimeout(() => autoDiary(false), 600);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) autoDiary(false); });
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 </script>
 </body>

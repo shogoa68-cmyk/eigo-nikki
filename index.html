@@ -131,6 +131,17 @@ function render() {
 /* ---------- ホーム ---------- */
 function dueCards() { const now = Date.now(); return S.cards.filter(c => c.due <= now).sort((a, b) => a.due - b.due); }
 function remaining() { return Math.max(0, S.settings.cap - S.daily.done); }
+// ホームの「今日の英文」：いちばん新しい英文を、ホームのまま読んで・聴ける
+function todayEssayHtml() {
+  const e = S.essays[0];
+  if (!e) return `<div class="card"><b>📖 今日の英文</b><p class="sub">まだ英文がありません。「日記」タブで、日記から英文をつくれます。</p><button class="btn sub" onclick="go('diary')">日記タブへ</button></div>`;
+  const day = new Date(e.createdAt), same = x => day.toLocaleDateString('sv-SE') === x.toLocaleDateString('sv-SE');
+  const label = same(new Date()) ? '今日' : same(new Date(Date.now() - 864e5)) ? '昨日' : '最新（' + (day.getMonth() + 1) + '/' + day.getDate() + '）';
+  return `<div class="card"><div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px"><b>📖 ${label}の英文</b><span class="sub" style="text-align:right">${esc(e.title || '')}</span></div>
+    <div class="read" style="font-size:17px;line-height:1.9;margin-top:10px">${esc(e.text).replace(/\n/g, '<br>')}</div>
+    <div class="row" style="margin-top:12px"><button class="btn" onclick="speak(S.essays[0].text)">▶ 聴く</button><button class="btn ghost" onclick="speechSynthesis.cancel()">■ 止める</button></div>
+    <button class="btn sub" style="margin-top:8px" onclick="speechSynthesis.cancel();tab='read';session=null;openEssay(S.essays[0].id)">訳・単語・文法を見る</button></div>`;
+}
 function vHome() {
   if (session) return vReview();
   const n = Math.min(dueCards().length, remaining());
@@ -139,7 +150,7 @@ function vHome() {
   else if (n > 0) body = `<div class="big">${n}語</div><p class="center sub">今日のおさらい</p><button class="btn" onclick="startReview()">はじめる</button>`;
   else body = `<div class="big">✓</div><p class="center">今日はおしまい。おつかれさま！</p>
     <button class="btn ghost" onclick="S.daily.done=Math.max(0,S.daily.done-5);save();render()" ${dueCards().length ? '' : 'disabled'}>もう少しやる（+5語）</button>`;
-  $('#app').innerHTML = `<h1>マイ英語</h1>${noticeHtml()}<div class="card">${body}</div>
+  $('#app').innerHTML = `<h1>マイ英語</h1>${noticeHtml()}${todayEssayHtml()}<div class="card">${body}</div>
     <div class="card"><div class="sub">集めた単語</div><div style="font-size:24px">${S.cards.length}語</div></div>`;
 }
 function startReview() {

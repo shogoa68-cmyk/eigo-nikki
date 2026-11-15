@@ -255,8 +255,8 @@ function addManual() {
 }
 function delCard(id) { if (!confirm('この単語を消しますか？')) return; S.cards = S.cards.filter(c => c.id !== id); save(); render(); }
 
-/* ---------- Googleドライブ連携（選んだファイルだけ読む：drive.file 権限＋Picker） ---------- */
-// Googleの情報（クライアントID等）は、この端末の中だけに保存。コードにも、バックアップにも入れない
+/* ---------- Googleドライブ連携（Googleにログイン → ドライブの一覧から日記を選ぶ。読み取り専用） ---------- */
+// クライアントIDは、この端末の中だけに保存。コードにも、バックアップにも入れない
 const GKEY = 'eigo-gcfg-v1';
 function gcfg() { try { return JSON.parse(localStorage.getItem(GKEY)) || {}; } catch (e) { return {}; } }
 function gset(k, v) { const c = gcfg(); c[k] = v.trim(); try { localStorage.setItem(GKEY, JSON.stringify(c)); } catch (e) {} }
@@ -272,46 +272,55 @@ let gReady = false, gTok = null, gTokExp = 0;
 // ボタンを押した瞬間にログイン画面を開けるよう、部品は先に読み込んでおく（スマホは押した直後でないと窓が開かないため）
 function preloadGoogle() {
   if (gReady || _sc.loading) return; _sc.loading = true;
-  Promise.all([loadScript('https://accounts.google.com/gsi/client'), loadScript('https://apis.google.com/js/api.js')])
-    .then(() => gapi.load('picker', () => { gReady = true; if (tab === 'diary') render(); }))
-    .catch(() => { _sc.loading = false; });
+  loadScript('https://accounts.google.com/gsi/client').then(() => { gReady = true; if (tab === 'diary') render(); }).catch(() => { _sc.loading = false; });
 }
 function getToken(cid) {
   return new Promise((ok, ng) => {
     if (gTok && Date.now() < gTokExp - 60000) return ok(gTok);
     google.accounts.oauth2.initTokenClient({
-      client_id: cid, scope: 'https://www.googleapis.com/auth/drive.file',
+      client_id: cid, scope: 'https://www.googleapis.com/auth/drive.readonly',
       callback: r => { if (r.error) return ng(new Error(r.error)); gTok = r.access_token; gTokExp = Date.now() + (r.expires_in || 3600) * 1000; ok(gTok); },
       error_callback: e => ng(new Error(e.type || 'ログインが中止されました'))
     }).requestAccessToken();
   });
 }
+let dv = null;   // ドライブの一覧画面の状態 { items, q, sel, busy }
 async function pickDiary() {
   const c = gcfg();
-  if (!c.cid || !c.key || !c.app) { toast('先に設定でGoogleの情報を入れてください'); return go('set'); }
+  if (!c.cid) { toast('先に設定でクライアントIDを入れてください'); return go('set'); }
   if (!gReady) { preloadGoogle(); return toast('準備中です。数秒待ってもう一度押してください'); }
-  let tok;
-  try { tok = await getToken(c.cid); } catch (e) { return toast('Googleにつながりませんでした：' + e.message); }
-  const view = new google.picker.DocsView(google.picker.ViewId.DOCS)
-    .setMimeTypes('application/vnd.google-apps.document,text/plain,text/markdown').setIncludeFolders(true);
-  new google.picker.PickerBuilder().addView(view).enableFeature(google.picker.Feature.MULTISELECT_ENABLED)
-    .setOAuthToken(tok).setDeveloperKey(c.key).setAppId(c.app).setLocale('ja').setCallback(onPicked).build().setVisible(true);
+  try { await getToken(c.cid); } catch (e) { return toast('Googleにつながりませんでした：' + e.message); }
+  dv = { items: [], q: '', sel: {}, busy: true }; render(); await driveList();
 }
-async function onPicked(d) {
-  if (d.action !== google.picker.Action.PICKED) return;
-  let n = 0;
-  for (const f of d.docs) {
+async function driveList() {
+  dv.busy = true; render();
+  try {
+    const kinds = "(mimeType='application/vnd.google-apps.document' or mimeType='text/plain' or mimeType='text/markdown')";
+    const q = 'trashed=false and ' + kinds + (dv.q ? " and name contains '" + dv.q.replace(/\\/g, '\\\\').replace(/'/g, "\\'") + "'" : '');
+    const r = await fetch('https://www.googleapis.com/drive/v3/files?pageSize=30&orderBy=modifiedTime%20desc&fields=files(id,name,mimeType,modifiedTime)&q=' + encodeURIComponent(q),
+      { headers: { Authorization: 'Bearer ' + gTok } });
+    if (r.status === 401) { gTok = null; throw new Error('ログインの期限切れです。もう一度「ドライブから選ぶ」を押してください'); }
+    if (!r.ok) throw new Error(r.status);
+    dv.items = (await r.json()).files || [];
+  } catch (e) { toast('一覧を取れませんでした：' + e.message); dv.items = []; }
+  dv.busy = false; if (tab === 'diary') render();
+}
+function searchDrive() { dv.q = $('#dq').value.trim(); driveList(); }
+function togSel(i) { const f = dv.items[i]; if (dv.sel[f.id]) delete dv.sel[f.id]; else dv.sel[f.id] = f; render(); }
+async function importSelected() {
+  const files = Object.values(dv.sel); let n = 0;
+  for (const f of files) {
     try {
       const isDoc = f.mimeType === 'application/vnd.google-apps.document';   // Googleドキュメントは文字に変換して取る
       const url = 'https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(f.id) + (isDoc ? '/export?mimeType=text/plain' : '?alt=media');
       const r = await fetch(url, { headers: { Authorization: 'Bearer ' + gTok } });
       if (!r.ok) throw new Error(r.status);
-      addDiary(f.id, f.name, (await r.text()).replace(/^﻿/, '').trim(), f.lastEditedUtc);
+      addDiary(f.id, f.name, (await r.text()).replace(/^﻿/, '').trim(), f.modifiedTime);
       n++;
     } catch (e) { toast('「' + f.name + '」を読めませんでした'); }
   }
   if (n) { save(); toast(n + '件、取り込みました'); }
-  if (tab === 'diary') render();
+  dv = null; if (tab === 'diary') render();
 }
 function addDiary(id, name, text, mod) {
   const d = { id, name, text, modified: mod || 0, importedAt: Date.now() };
@@ -322,7 +331,7 @@ function addDiary(id, name, text, mod) {
 /* ---------- 日記 ---------- */
 let openDiaryId = null;
 function vDiary() {
-  const c = gcfg(), ok = c.cid && c.key && c.app;
+  const c = gcfg(), ok = !!c.cid;
   if (ok) preloadGoogle();
   const list = S.diaries.map(d => `<div class="item" style="display:block">
       <div style="display:flex;justify-content:space-between;gap:8px"><b>${esc(d.name)}</b><button class="x" onclick="delDiary('${d.id}')">✕</button></div>
@@ -331,14 +340,24 @@ function vDiary() {
         : `<div class="sub" style="margin-top:4px">${esc(d.text.slice(0, 50))}${d.text.length > 50 ? '…' : ''}</div><button class="btn ghost" style="margin-top:8px;padding:8px" onclick="openDiaryId='${d.id}';render()">全文を見る</button>`}
     </div>`).join('');
   $('#app').innerHTML = `<h1>日記</h1>
-  <div class="card"><b>Googleドライブから取り込む</b>
-    <p class="sub">日記のファイル（Googleドキュメントやテキスト）を選びます。選んだファイルだけがアプリに渡されます。</p>
-    <button class="btn" onclick="pickDiary()">${ok ? (gReady ? 'ドライブから選ぶ' : '準備しています…') : '設定を開く（Googleの情報が必要です）'}</button></div>
+  ${dv ? driveHtml() : `<div class="card"><b>Googleドライブから取り込む</b>
+    <p class="sub">Googleにログインして、ドライブの中から日記（Googleドキュメントやテキスト）を選びます。アプリは読むだけで、ファイルを書き換えたり消したりはしません。</p>
+    <button class="btn" onclick="pickDiary()">${ok ? (gReady ? 'ドライブから選ぶ' : '準備しています…') : '設定を開く（クライアントIDが必要です）'}</button></div>`}
   <div class="card"><b>貼り付けで追加</b>
     <label>タイトル（なくてもOK）</label><input id="dtitle">
     <label>日記の本文</label><textarea id="dtext" style="min-height:90px"></textarea>
     <button class="btn sub" style="margin-top:10px" onclick="addPasted()">追加</button></div>
   <div class="card"><b>取り込んだ日記（${S.diaries.length}件）</b>${list || '<p class="sub center">まだありません</p>'}</div>`;
+}
+function driveHtml() {
+  const rows = dv.items.map((f, i) => `<label class="item" style="align-items:center;margin:0;color:var(--ink);font-size:15px">
+      <span><input type="checkbox" style="width:auto;margin-right:6px" ${dv.sel[f.id] ? 'checked' : ''} onchange="togSel(${i})">${esc(f.name)}</span>
+      <span class="sub" style="white-space:nowrap">${new Date(f.modifiedTime).toLocaleDateString('ja-JP')}</span></label>`).join('');
+  const n = Object.keys(dv.sel).length;
+  return `<div class="card"><b>ドライブの中から選ぶ</b><p class="sub">新しい順に30件まで表示します。名前で探すこともできます。</p>
+    <div class="row"><input id="dq" value="${esc(dv.q)}" placeholder="ファイル名で探す" onkeydown="if(event.key==='Enter')searchDrive()"><button class="btn sub" style="flex:0 0 72px;padding:10px" onclick="searchDrive()">探す</button></div>
+    <div style="margin-top:8px">${dv.busy ? '<p class="sub center">読み込み中…</p>' : (rows || '<p class="sub center">見つかりませんでした</p>')}</div>
+    <div class="row" style="margin-top:12px"><button class="btn ghost" onclick="dv=null;render()">やめる</button><button class="btn" onclick="importSelected()" ${n ? '' : 'disabled'}>取り込む（${n}件）</button></div></div>`;
 }
 function addPasted() {
   const t = $('#dtext').value.trim(); if (!t) return toast('本文を入れてください');
@@ -355,14 +374,12 @@ function vSet() {
     <label>読み上げの速さ（${S.settings.rate}）</label><input type="range" min="0.6" max="1.2" step="0.1" value="${S.settings.rate}" oninput="S.settings.rate=+this.value;save();this.previousElementSibling.textContent='読み上げの速さ（'+this.value+'）'"></div>
   <div class="card"><b>Googleドライブ連携</b><p class="sub">日記を読み込むための情報です。この端末の中だけに保存され、バックアップには入りません。</p>
     <label>クライアントID</label><input value="${esc(g.cid || '')}" onchange="gset('cid',this.value)" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="xxxx.apps.googleusercontent.com">
-    <label>APIキー（ブラウザ用）</label><input value="${esc(g.key || '')}" onchange="gset('key',this.value)" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="AIza...">
-    <label>プロジェクト番号</label><input value="${esc(g.app || '')}" onchange="gset('app',this.value)" inputmode="numeric" placeholder="数字だけ">
     <details><summary>どこで手に入れる？（Google Cloudの設定手順）</summary><ol>
-      <li><b>console.cloud.google.com</b> で新しいプロジェクトを作る（このときの「プロジェクト番号」を下の欄に）</li>
-      <li>「APIとサービス」→「ライブラリ」で <b>Google Drive API</b> と <b>Google Picker API</b> を有効にする</li>
-      <li>「OAuth同意画面」（Google Auth Platform）を設定：種類は「外部」、テストユーザーに<b>自分のGmail</b>を追加、スコープは <b>drive.file</b></li>
-      <li>「認証情報」→「OAuthクライアントID」→ 種類は<b>ウェブアプリ</b>。承認済みのJavaScript生成元に、このアプリのURLの「https://…github.io」の部分（/eigo-nikki は付けない）を入れる → できたIDを上の欄に</li>
-      <li>「認証情報」→「APIキー」を作る。<b>HTTPリファラー制限</b>にこのアプリのURL（末尾に /* ）を入れ、APIの制限は Picker API だけにする → できたキーを上の欄に</li></ol></details></div>
+      <li><b>console.cloud.google.com</b> で新しいプロジェクトを作る</li>
+      <li>「APIとサービス」→「ライブラリ」で <b>Google Drive API</b> を有効にする</li>
+      <li>「OAuth同意画面」（Google Auth Platform）を設定：種類は「外部」、テストユーザーに<b>自分のGmail</b>を追加、スコープは <b>drive.readonly</b>（ドライブの読み取り）</li>
+      <li>「認証情報」→「OAuthクライアントID」→ 種類は<b>ウェブアプリ</b>。承認済みのJavaScript生成元に、このアプリのURLの「https://…github.io」の部分（/eigo-nikki は付けない）を入れる → できたIDを上の欄に</li></ol>
+      <p class="sub">ログインのとき「このアプリは確認されていません」と出ますが、自分で作ったアプリなので「詳細」→「（アプリ名）に移動」で進めます。</p></details></div>
   <div class="card"><b>バックアップ</b><p class="sub">データ（日記の本文も含む）はこの端末の中だけにあります。機種変更やブラウザのデータ削除の前に保存しておくと安心です。</p>
     <div class="row"><button class="btn sub" onclick="exportData()">書き出す</button><button class="btn sub" onclick="$('#imp').click()">読み込む</button></div>
     <input type="file" id="imp" accept=".json" hidden onchange="importData(this.files[0])"></div>`;

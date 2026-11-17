@@ -294,6 +294,8 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 .ls.wait{color:var(--color-neutral-500)}
 .ls.wait .dotp{border:2px solid var(--color-neutral-400)}
 .errico{width:72px;height:72px;border-radius:50%;background:var(--color-accent-200);color:var(--color-accent-700);display:flex;align-items:center;justify-content:center;margin-bottom:22px}
+.dcard.used{background:var(--color-neutral-200);box-shadow:none}
+.chip svg{flex:none}
 </style>
 </head>
 <body>
@@ -347,6 +349,7 @@ function load() {
 let S = load();
 S.diaries = S.diaries || [];   // 前のバージョンのデータにも「日記」「英文」の置き場所を作る
 S.essays = S.essays || [];
+markUsedFromEssays();
 S.autoState = S.autoState || { lastCheck: 0, files: {} };
 S.outputs = S.outputs || []; S.dictCache = S.dictCache || {};
 function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { toast('保存できませんでした'); } }
@@ -822,25 +825,33 @@ function chatHtml() {
 
 /* ---------- 日記 ---------- */
 let pasteOpen = false;
+let dfilter = 'all';   // 日記の絞り込み：all／unused／used
 function vDiary() {
   const c = gcfg(), ok = !!c.cid;
   if (ok) preloadGoogle();
   if (dv) { $('#app').innerHTML = driveHtml(); return; }   // ドライブから選ぶ画面
-  const list = S.diaries.map(d => `<div class="card dcard"><div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start"><div style="min-width:0"><div class="tt">${esc(d.name)}</div>
-      <div class="meta">${new Date(d.importedAt).toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric' })}に取り込み・${d.text.length}文字</div></div><button class="x" onclick="delDiary('${d.id}')" aria-label="消す">${ic('x', 20)}</button></div>
+  const nUsed = S.diaries.filter(d => d.used).length, nUn = S.diaries.length - nUsed;
+  const shown = S.diaries.filter(d => dfilter === 'all' || (dfilter === 'used') === !!d.used);
+  const list = shown.map(d => { const n = S.essays.filter(e => e.diaryId === d.id).length; return `<div class="card dcard ${d.used ? 'used' : ''}"><div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start"><div style="min-width:0"><div class="tt">${esc(d.name)}</div>
+      <div class="meta">${new Date(d.importedAt).toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric' })}に取り込み・${d.text.length}文字</div>
+      ${d.used ? `<div style="margin-top:6px"><span class="chip sage">${ic('check', 14)}使用済み${n ? '・英文' + n + '本' : ''}</span></div>` : ''}</div>
+      <button class="x" onclick="delDiary('${d.id}')" aria-label="消す">${ic('x', 20)}</button></div>
     ${openDiaryId === d.id ? `<div class="pre">${esc(d.text)}</div>` : `<div class="ex2">${esc(d.text)}</div>`}
-    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="btn" onclick="makeEssay('${d.id}')" ${gen ? 'disabled' : ''}>この日記から英文をつくる</button>
-      <button class="linkbtn" onclick="openDiaryId=${openDiaryId === d.id ? 'null' : `'${d.id}'`};render()">${openDiaryId === d.id ? 'とじる' : '全文を見る'}</button></div></div>`).join('');
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="btn ${d.used ? 'soft' : ''}" onclick="makeEssay('${d.id}')" ${gen ? 'disabled' : ''}>${d.used ? 'もう一度英文をつくる' : 'この日記から英文をつくる'}</button>
+      <button class="linkbtn" onclick="openDiaryId=${openDiaryId === d.id ? 'null' : `'${d.id}'`};render()">${openDiaryId === d.id ? 'とじる' : '全文を見る'}</button>
+      <button class="linkbtn" onclick="toggleUsed('${d.id}')">${d.used ? '未使用にもどす' : '使用済みにする'}</button></div></div>`; }).join('');
   $('#app').innerHTML = `<h1>日記</h1>${S.autoState.status ? `<p class="sub" style="font-weight:700;margin:-6px 0 14px">自動読み込み：${esc(S.autoState.status)}</p>` : ''}
   <div class="drivecard"><span class="ico">${ic('link', 24)}</span><div class="t"><b>Googleドライブ</b><div class="sub" style="font-weight:700">読むだけ・書き換えなし</div></div>
     <button class="btn" onclick="${ok ? 'pickDiary()' : 'openWizard(1)'}">${ok ? (gReady ? 'えらぶ' : '準備中…') : '設定する'}</button></div>
   <button class="foldrow" onclick="pasteOpen=!pasteOpen;render()">貼り付けて追加${ic(pasteOpen ? 'x' : 'plus', 22)}</button>
   ${pasteOpen ? `<div class="card"><label style="margin-top:0">タイトル（なくてもOK）</label><input id="dtitle"><label>日記の本文</label><textarea id="dtext" style="min-height:100px"></textarea><button class="btn soft" style="margin-top:12px" onclick="addPasted()">追加</button></div>` : ''}
-  <div class="shead">取り込んだ日記 <small>${S.diaries.length}件</small></div>${list || '<div class="card softnote">まだありません。上の「えらぶ」か「貼り付けて追加」から、日記を入れましょう。</div>'}`;
+  <div class="shead">取り込んだ日記 <small>${S.diaries.length}件・未使用 ${nUn}</small></div>
+  ${S.diaries.length ? `<div class="pills"><button class="${dfilter === 'all' ? 'on' : ''}" onclick="dfilter='all';render()">すべて ${S.diaries.length}</button><button class="${dfilter === 'unused' ? 'on' : ''}" onclick="dfilter='unused';render()">未使用 ${nUn}</button><button class="${dfilter === 'used' ? 'on' : ''}" onclick="dfilter='used';render()">使用済み ${nUsed}</button></div>` : ''}
+  ${list || `<div class="card softnote">${S.diaries.length ? 'この絞り込みに、当てはまる日記はありません。' : 'まだありません。上の「えらぶ」か「貼り付けて追加」から、日記を入れましょう。'}</div>`}`;
 }
 function driveHtml() {
   const rows = dv.items.map((f, i) => `<button class="frow" role="checkbox" aria-checked="${!!dv.sel[f.id]}" onclick="togSel(${i})"><span class="chk ${dv.sel[f.id] ? 'on' : ''}">${dv.sel[f.id] ? ic('check', 16, 3.5) : ''}</span>
-      <span style="min-width:0;overflow:hidden;text-overflow:ellipsis">${esc(f.name)}</span><span class="d">${new Date(f.modifiedTime).toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric' })}</span></button>`).join('');
+      <span style="min-width:0;overflow:hidden;text-overflow:ellipsis">${esc(f.name)}${(() => { const x = S.diaries.find(d => d.id === f.id); return x ? ` <span class="chip ${x.used ? 'sage' : 'gray'}" style="font-size:11px;padding:2px 8px;vertical-align:middle">${x.used ? '使用済み' : '取り込みずみ'}</span>` : ''; })()}</span><span class="d">${new Date(f.modifiedTime).toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric' })}</span></button>`).join('');
   const n = Object.keys(dv.sel).length;
   return `<h1 style="font-size:32px">ドライブから選ぶ</h1><p class="sub" style="font-weight:700;margin:-6px 0 14px">新しい順に30件まで。名前でも探せます。</p>
     <div class="search"><span class="si">${ic('search', 20)}</span><input id="dq" value="${esc(dv.q)}" placeholder="ファイル名で探す" enterkeyhint="search" onchange="searchDrive()" onkeydown="if(event.key==='Enter')searchDrive()"></div>
@@ -1051,10 +1062,15 @@ async function importSelected() {
   if (n) { save(); toast(n + '件、取り込みました'); }
   dv = null; if (tab === 'diary') render();
 }
+// 英文をつくった日記には「使用済み」の印（used）をつける。英文を消しても、印は残る
+function markUsedFromEssays() { (S.diaries || []).forEach(d => { if (!d.used && (S.essays || []).some(e => e.diaryId === d.id)) { d.used = true; d.usedAt = d.usedAt || Date.now(); } }); }
+function markUsed(id) { const d = S.diaries.find(x => x.id === id); if (d && !d.used) { d.used = true; d.usedAt = Date.now(); } }
+function toggleUsed(id) { const d = S.diaries.find(x => x.id === id); if (!d) return; d.used = !d.used; d.usedAt = d.used ? Date.now() : 0; save(); render(); }
 function addDiary(id, name, text, mod) {
   const d = { id, name, text, modified: mod || 0, importedAt: Date.now() };
   const i = S.diaries.findIndex(x => x.id === id);
-  if (i >= 0) S.diaries[i] = d; else S.diaries.unshift(d);   // 同じファイルをもう一度選ぶと、最新の内容に入れ替え
+  if (i >= 0) { const prev = S.diaries[i]; if (prev.used && prev.text === text) { d.used = true; d.usedAt = prev.usedAt; } S.diaries[i] = d; }   // 同じ内容なら、使用済みの印を引き継ぐ（内容が変わったら、未使用にもどる）
+  else S.diaries.unshift(d);   // 同じファイルをもう一度選ぶと、最新の内容に入れ替え
   return d;
 }
 
@@ -1098,6 +1114,7 @@ async function generateEssay(d, select, run) {
   const e = { id: 'e' + Date.now(), diaryId: d.id, diaryName: d.name, title: o.title || '', topic: String(o.topic || '').slice(0, 20), angle: String(o.angle || '').slice(0, 20), srcHash: hash(d.text), text: o.essay, createdAt: Date.now(), words: [], grammar: [],
     sentences: (o.sentences || []).filter(x => x && x.en).map(x => ({ en: String(x.en), ja: String(x.ja || '') })) };
   S.essays.unshift(e); S.essays = S.essays.slice(0, 50);   // 保存（新しい順・50件まで）。英文ができた時点で、先に保存する
+  markUsed(d.id);   // この日記は「使用済み」
   if (select) { S.essayId = e.id; S.text = e.text; rtab = 'en'; rlist = false; }
   save(); genStep = 3; if (gen) render();
   try { await explainEssay(e); } catch (err) { e.explainFailed = true; e.explainErr = err.message; save(); }   // 解説に失敗しても、英文は残る
@@ -1271,7 +1288,7 @@ function exportData() {
 }
 function importData(f) {
   if (!f) return; const r = new FileReader();
-  r.onload = () => { try { const d = JSON.parse(r.result); if (!d.cards) throw 0; S = d; S.diaries = S.diaries || []; S.essays = S.essays || []; S.autoState = S.autoState || { lastCheck: 0, files: {} }; S.outputs = S.outputs || []; S.dictCache = S.dictCache || {}; save(); toast('読み込みました'); render(); } catch (e) { toast('読み込めませんでした'); } };
+  r.onload = () => { try { const d = JSON.parse(r.result); if (!d.cards) throw 0; S = d; S.diaries = S.diaries || []; S.essays = S.essays || []; S.autoState = S.autoState || { lastCheck: 0, files: {} }; S.outputs = S.outputs || []; S.dictCache = S.dictCache || {}; markUsedFromEssays(); save(); toast('読み込みました'); render(); } catch (e) { toast('読み込めませんでした'); } };
   r.readAsText(f);
 }
 

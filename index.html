@@ -296,6 +296,11 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 .errico{width:72px;height:72px;border-radius:50%;background:var(--color-accent-200);color:var(--color-accent-700);display:flex;align-items:center;justify-content:center;margin-bottom:22px}
 .dcard.used{background:var(--color-neutral-200);box-shadow:none}
 .chip svg{flex:none}
+.wrow2{padding:14px 0;border-bottom:1px solid var(--color-neutral-300)}
+.wrow2:last-child{border:0}
+.exbox .exl{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.exbox .ja{font:700 13px var(--font-body);color:var(--color-accent-2-800);margin-top:4px}
+.exbox.sm{font-size:15px;padding:10px 14px;margin-top:8px}
 </style>
 </head>
 <body>
@@ -493,7 +498,7 @@ function vReview() {
   $('#app').innerHTML = `<div class="hd"><h1>おさらい</h1><span class="sub" style="font:400 17px var(--font-en-display)">${session.i + 1} / ${session.q.length}</span></div>
   <div class="progress"><i style="width:${pct}%"></i></div>
   <div class="rcard">${session.show
-    ? `<div style="display:flex;align-items:center;gap:12px"><span class="word sm">${esc(c.word)}</span>${sp}</div><div class="mean">${esc(c.meaning)}</div>${c.note ? `<div class="sub" style="font-weight:700">${esc(c.note)}</div>` : ''}${c.example ? `<div class="exbox">${esc(c.example)}</div>` : ''}`
+    ? `<div style="display:flex;align-items:center;gap:12px"><span class="word sm">${esc(c.word)}</span>${sp}</div><div class="mean">${esc(c.meaning)}</div>${c.note ? `<div class="sub" style="font-weight:700">${esc(c.note)}</div>` : ''}${c.example ? `<div class="exbox"><div class="exl"><span>${esc(c.example)}</span><button class="iconbtn sm" data-t="${esc(c.example)}" onclick="speak(this.dataset.t)" aria-label="例文を聴く">${ic('volume', 16)}</button></div>${exJaFor(c) ? `<div class="ja">${esc(exJaFor(c))}</div>` : ''}</div>` : ''}`
     : `<span class="chip sage" style="align-self:flex-start">単語</span><div class="word">${esc(c.word)}</div><button class="btn soft" style="width:auto;align-self:flex-start" data-t="${esc(c.word)}" onclick="speak(this.dataset.t)">${ic('volume', 20)}聴く</button><p class="sub" style="font-weight:700;margin:0">意味を思い出してから、下をタップ</p>`}</div>
   ${session.show ? `<p class="sub center" style="margin:0 0 10px;font-weight:700">どのくらい思い出せた？</p><div class="stack">
     <button class="ans again" onclick="answer('again')">忘れた<small>また後で</small></button>
@@ -570,7 +575,7 @@ async function lookupWord(s) {
 }
 function addFromSheet() {
   const m = $('#mean').value.trim(); if (!m) return toast('意味を入れてください');
-  const c = newCard(sheet.word, m, sheet.sent); if (sheet.note) c.note = sheet.note; S.cards.push(c);
+  const c = newCard(sheet.word, m, sheet.sent); if (sheet.note) c.note = sheet.note; if (sheet.ja) c.exJa = sheet.ja; S.cards.push(c);
   const e = curEssay(), ew = e && e.words.find(x => String(x.word).toLowerCase() === sheet.word); if (ew) ew.added = true;
   save(); sheet = null; toast('入れました'); render();
 }
@@ -866,15 +871,6 @@ function addPasted() {
 
 /* ---------- 単語帳 ---------- */
 let addOpen = false;
-function vWords() {
-  const list = [...S.cards].sort((a, b) => b.createdAt - a.createdAt);
-  $('#app').innerHTML = `<div class="hd"><h1>単語帳</h1><span class="date">${S.cards.length}語</span></div>
-  <button class="foldrow" onclick="addOpen=!addOpen;render()">単語を追加${ic(addOpen ? 'x' : 'plus', 22)}</button>
-  ${addOpen ? `<div class="card"><label style="margin-top:0">英単語・フレーズ</label><input id="nw" autocapitalize="off"><label>意味</label><input id="nm"><label>例文（なくてもOK）</label><input id="ne">
-    <button class="btn" style="margin-top:12px" onclick="addManual()">追加</button></div>` : ''}
-  <div class="card" style="padding:6px 18px">${list.length ? list.map(c => `<div class="wrow"><div class="wt"><div class="wd">${esc(c.word)}</div><div class="mn">${esc(c.meaning)}</div></div>
-    <button class="iconbtn sm" data-t="${esc(c.word)}" onclick="speak(this.dataset.t)" aria-label="聴く">${ic('volume', 18)}</button><button class="x" onclick="delCard('${c.id}')" aria-label="消す">${ic('x', 20)}</button></div>`).join('') : '<p class="sub center" style="padding:14px 0">まだありません</p>'}</div>`;
-}
 function addManual() {
   const w = $('#nw').value.trim().toLowerCase(), m = $('#nm').value.trim();
   if (!w || !m) return toast('単語と意味を入れてください');
@@ -996,6 +992,18 @@ async function makeEssay(id) {
   }
 }
 
+function vWords() {
+  const list = [...S.cards].sort((a, b) => b.createdAt - a.createdAt);
+  const sp = t => `data-t="${esc(t)}" onclick="speak(this.dataset.t)"`;
+  $('#app').innerHTML = `<div class="hd"><h1>単語帳</h1><span class="date">${S.cards.length}語</span></div>
+  <button class="foldrow" onclick="addOpen=!addOpen;render()">単語を追加${ic(addOpen ? 'x' : 'plus', 22)}</button>
+  ${addOpen ? `<div class="card"><label style="margin-top:0">英単語・フレーズ</label><input id="nw" autocapitalize="off"><label>意味</label><input id="nm"><label>例文（なくてもOK）</label><input id="ne">
+    <button class="btn" style="margin-top:12px" onclick="addManual()">追加</button></div>` : ''}
+  <div class="card" style="padding:6px 18px">${list.length ? list.map(c => { const ja = exJaFor(c); return `<div class="wrow2"><div class="wrow" style="padding:0;border:0"><div class="wt"><div class="wd">${esc(c.word)}</div><div class="mn">${esc(c.meaning)}</div></div>
+      <button class="iconbtn sm" ${sp(c.word)} aria-label="単語を聴く">${ic('volume', 18)}</button><button class="x" onclick="delCard('${c.id}')" aria-label="消す">${ic('x', 20)}</button></div>
+    ${c.note ? `<div class="sub" style="font-weight:700;margin-top:4px">${esc(c.note)}</div>` : ''}
+    ${c.example ? `<div class="exbox sm"><div class="exl"><span>${esc(c.example)}</span><button class="iconbtn sm" ${sp(c.example)} aria-label="例文を聴く">${ic('volume', 16)}</button></div>${ja ? `<div class="ja">${esc(ja)}</div>` : ''}</div>` : ''}</div>`; }).join('') : '<p class="sub center" style="padding:14px 0">まだありません</p>'}</div>`;
+}
 /* ---------- 単語帳（一覧の続き） ---------- */
 function delCard(id) { if (!confirm('この単語を消しますか？')) return; S.cards = S.cards.filter(c => c.id !== id); save(); render(); }
 
@@ -1135,7 +1143,7 @@ async function explainEssay(e) {
   const known = new Set(S.cards.map(x => x.word));
   const words = (o.words || []).filter(w => w.word && w.meaning && !known.has(String(w.word).toLowerCase()))
     .map(w => ({ word: String(w.word), meaning: String(w.meaning), example: String(w.example || ''), note: String(w.note || ''), added: false }));
-  if (S.settings.auto !== false) words.forEach(w => { addWordCard(w); w.added = true; });   // 設定がオンなら、自動で単語帳へ
+  if (S.settings.auto !== false) words.forEach(w => { addWordCard(w, e); w.added = true; });   // 設定がオンなら、自動で単語帳へ
   e.words = words;
   e.grammar = (o.grammar || []).filter(g => g && g.point).map(g => ({ point: String(g.point), form: String(g.form || ''), example: String(g.example || ''), mark: String(g.mark || ''), explain: String(g.explain || '') }));
   e.explained = true; e.explainFailed = false; delete e.explainErr; save();
@@ -1265,11 +1273,20 @@ function openNotice() { const n = S.notice; n.seen = true; tab = 'read'; session
 function speakSent(i) { const e = curEssay(); if (e && e.sentences[i]) speak(e.sentences[i].en); }
 // 文法のポイント：ポイントごとに色分けし、例文の中の該当部分にハイライト＋下線をつける
 function curEssay() { return (S.essays || []).find(e => e.id === S.essayId) || null; }
-function addWordCard(w) {
-  const word = String(w.word).toLowerCase().trim();
-  if (word && !S.cards.some(c => c.word === word)) { const c = newCard(word, w.meaning, w.example || ''); if (w.note) c.note = w.note; S.cards.push(c); }
+function essayJa(e, sent) {   // 英文の1文ごとの訳から、その文の日本語訳を探す
+  const t = (sent || '').trim(); if (!e || !e.sentences || !t) return '';
+  const m = e.sentences.find(x => x.en.trim() === t || (t.length > 8 && (x.en.includes(t) || t.includes(x.en.trim()))));
+  return m ? m.ja : '';
 }
-function addCand(i) { const w = curEssay().words[i]; addWordCard(w); w.added = true; save(); toast('入れました'); render(); }
+function exJaFor(c) {   // 単語の例文の日本語訳（保存してあればそれ、なければ、保存した英文から探す）
+  if (c.exJa) return c.exJa; if (!c.example) return '';
+  for (const e of S.essays) { const j = essayJa(e, c.example); if (j) return j; } return '';
+}
+function addWordCard(w, e) {
+  const word = String(w.word).toLowerCase().trim();
+  if (word && !S.cards.some(c => c.word === word)) { const c = newCard(word, w.meaning, w.example || ''); if (w.note) c.note = w.note; const j = essayJa(e, w.example); if (j) c.exJa = j; S.cards.push(c); }
+}
+function addCand(i) { const w = curEssay().words[i]; addWordCard(w, curEssay()); w.added = true; save(); toast('入れました'); render(); }
 function removeCand(i) {
   const w = curEssay().words[i], word = String(w.word).toLowerCase().trim();
   S.cards = S.cards.filter(c => c.word !== word); w.added = false; save(); toast('はずしました'); render();

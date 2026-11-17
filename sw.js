@@ -1,5 +1,5 @@
 // オフラインでも開けるように、アプリ本体をスマホに保存しておく仕組み
-const CACHE = 'eigo-v2';
+const CACHE = 'eigo-v3';
 const FILES = ['./', './index.html', './manifest.webmanifest', './icon.svg'];
 self.addEventListener('install', e => e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES))));
 self.addEventListener('activate', e => e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k))))));

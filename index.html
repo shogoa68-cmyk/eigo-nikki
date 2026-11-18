@@ -333,6 +333,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 .exbox .ja{font:700 calc(var(--fs,1)*13px) var(--font-body);color:var(--color-accent-2-800);margin-top:4px}
 .exbox.sm{font-size:calc(var(--fs,1)*15px);padding:10px 14px;margin-top:8px}
 .rcard .word.fx{font-size:calc(var(--fs,1)*30px);line-height:1.3}
+.nextbtn{margin:0 0 8px}
 </style>
 </head>
 <body>
@@ -690,6 +691,15 @@ let rtab = 'en', rlist = false;   // いま開いているタブ／保存した�
 const RTABS = [['en', '英文'], ['ja', '訳'], ['words', '単語'], ['gram', '文法'], ['prac', '練習']];
 function tabsHtml() { return `<div class="seg">${RTABS.map(([k, n]) => `<button class="${rtab === k ? 'on' : ''}" onclick="setRtab('${k}')">${n}</button>`).join('')}</div>`; }
 function setRtab(k) { if (k !== 'en') stopSpeech(); sheet = null; rtab = k; render(); window.scrollTo(0, 0); }
+// 学習の順番（英文→訳→単語→文法→練習）に、渡り歩くための「つぎへ」ボタン。最後は「学習を終える」
+function nextHtml() {
+  const e = curEssay(); if (!e) return '';
+  const i = RTABS.findIndex(x => x[0] === rtab), nx = RTABS[i + 1];
+  const step = `<p class="sub center" style="margin:18px 0 8px;font-weight:700">${i + 1} / ${RTABS.length}</p>`;
+  if (nx) return `${step}<button class="btn nextbtn" onclick="setRtab('${nx[0]}')">つぎは「${nx[1]}」へ${ic('chevron-right', 20)}</button>`;
+  return `${step}<button class="btn nextbtn" onclick="finishStudy()">${ic('check', 20)}学習を終える</button>`;
+}
+function finishStudy() { stopSpeech(); S.daily.read = true; save(); toast('おつかれさま！「今日は読んだ」にしました'); go('home'); }
 function readHead(e) {
   return `<div class="rhead"><div>${e && e.topic ? `<div class="topic">話題：${esc(e.topic)}</div>` : ''}<h1 ${e ? '' : 'style="font-family:var(--font-heading);font-size:calc(var(--fs,1)*28px)"'}>${esc(e ? (e.title || 'Essay') : '英文を読む')}</h1></div>
     <button class="iconbtn" onclick="rlist=true;render()" aria-label="保存した英文">${ic('clock', 22)}</button></div>`;
@@ -707,11 +717,12 @@ function vRead() {
   }
   const isEn = !e || rtab === 'en'; let body;
   if (isEn) body = `<div id="reader"></div>
-    <details ${t ? '' : 'open'}><summary>自分で英文を貼り付ける</summary><div style="margin-top:8px"><textarea id="txt" placeholder="Paste English text here...">${esc(t)}</textarea><button class="btn soft" style="margin-top:10px" onclick="loadText()">読み込む</button></div></details>${t ? playerHtml() : ''}`;
+    <details ${t ? '' : 'open'}><summary>自分で英文を貼り付ける</summary><div style="margin-top:8px"><textarea id="txt" placeholder="Paste English text here...">${esc(t)}</textarea><button class="btn soft" style="margin-top:10px" onclick="loadText()">読み込む</button></div></details>${e && t ? nextHtml() : ''}${t ? playerHtml() : ''}`;
   else if (rtab === 'ja') body = transHtml();
   else if (rtab === 'words') body = redoHtml() + candHtml();
   else if (rtab === 'gram') body = redoHtml() + grammarHtml();
   else body = outputHtml();
+  if (e && rtab !== 'en' && rtab !== 'prac') body += nextHtml();   // 練習タブは、outputHtml の中で出す
   $('#app').innerHTML = readHead(e) + (e ? tabsHtml() : '') + body + (isEn && sheet ? sheetHtml() : '');
   if (isEn && t) { drawReader(t); pLabel(); }
 }
@@ -830,9 +841,9 @@ function outputHtml() {
   if (!out) {
     const n = (S.outputs || []).filter(o => o.essayId === e.id).length;
     return `<div id="outbox"><div class="rpanel"><b style="font:700 calc(var(--fs,1)*17px) var(--font-heading)">ミニ・アウトプット</b><p class="sub" style="margin:6px 0 14px">この英文で出てきた表現を、自分で使ってみましょう。${n ? '（この英文で' + n + '回やりました）' : ''}</p>
-      <div class="stack"><button class="btn" onclick="startOutput('write')">英作文をする</button><button class="btn soft" onclick="startOutput('chat')">会話をする（3往復）</button></div></div></div>`;
+      <div class="stack"><button class="btn" onclick="startOutput('write')">英作文をする</button><button class="btn soft" onclick="startOutput('chat')">会話をする（3往復）</button></div></div>${nextHtml()}</div>`;
   }
-  return `<div id="outbox">${out.mode === 'write' ? writeHtml() : chatHtml()}</div>`;
+  return `<div id="outbox">${out.mode === 'write' ? writeHtml() : chatHtml()}${out.stage === 'done' ? nextHtml() : ''}</div>`;   // 学習の終わりのボタンは、練習が終わったときだけ
 }
 function diffHtml(a, b) {   // 自分の英文となおした英文を、単語ごとに見くらべる（消えた語は取り消し線、足した語は下線）
   const A = a.trim().split(/\s+/), B = b.trim().split(/\s+/), nz = x => x.toLowerCase().replace(/[^a-z0-9']/g, '');
@@ -877,7 +888,7 @@ function chatHtml() {
   if (o.stage === 'loading' || o.stage === 'wait') ctl = '<div class="dots"><i></i><i></i><i></i></div>';
   else if (o.stage === 'talk') ctl = `<div class="spacer"></div><div class="chatbar"><textarea id="ochat" rows="1" placeholder="英語で返事を書く">${esc(o.draft || '')}</textarea><button class="sendbtn" onclick="sendChat()" aria-label="送る">${ic('send', 22)}</button></div>`;
   else ctl = `<div class="rpanel center" style="margin-top:14px"><span class="ci ok" style="margin:0 auto 8px;width:48px;height:48px">${ic('check', 26)}</span><b>3往復できました。おつかれさま！</b><div class="row" style="margin-top:14px"><button class="btn ghost" onclick="out=null;updateOut()">おわる</button><button class="btn" onclick="startOutput('chat')">もう一度</button></div></div>`;
-  return `<div class="hd"><h2 class="bigtitle" style="font-size:calc(var(--fs,1)*28px);margin:0">会話練習</h2><span class="sub" style="font:400 calc(var(--fs,1)*16px) var(--font-en-display)">${Math.min(o.turn, 3)} / 3</span></div>${outChips(o.targets)}${bubbles}${ctl}`;
+  return `<div class="hd"><h2 class="bigtitle" style="font-size:calc(var(--fs,1)*28px);margin:0">会話練習</h2><span class="sub" style="font:400 calc(var(--fs,1)*16px) var(--font-en-display)">${o.stage === 'done' ? '' : `<button class="linkbtn" onclick="out=null;updateOut()">やめる</button> `}${Math.min(o.turn, 3)} / 3</span></div>${outChips(o.targets)}${bubbles}${ctl}`;
 }
 
 /* ---------- 日記 ---------- */

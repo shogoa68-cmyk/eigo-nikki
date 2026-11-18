@@ -345,6 +345,9 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 .swhint.ok{left:14px;background:var(--color-accent-2-200);color:var(--color-accent-2-800)}
 .swhint.no{right:14px;background:var(--color-accent-200);color:var(--color-accent-800)}
 .linkbtn:disabled{opacity:.4}
+.lisctl{display:flex;align-items:center;justify-content:center;gap:18px;margin:4px 0 16px}
+.lisctl .sbtn{width:var(--tap);height:var(--tap);border:0;background:none;color:var(--color-text);display:flex;align-items:center;justify-content:center;border-radius:50%}
+.lisctl .speed{border:0;border-radius:var(--radius-pill);background:var(--color-neutral-200);color:var(--color-text);font:700 calc(var(--fs,1)*14px) var(--font-en-display);min-height:36px;padding:0 14px}
 </style>
 </head>
 <body>
@@ -425,12 +428,14 @@ function pickVoice() {
 function setVoice(v) { S.settings.voice = v; save(); pickVoice(); render(); }
 if ('speechSynthesis' in window) { pickVoice(); speechSynthesis.onvoiceschanged = () => { pickVoice(); try { if (tab === 'set') render(); } catch (e) {} }; }
 const PL = { key: null, pos: 0, token: 0, playing: false };   // 読み上げの状態：どの文章を、どこまで読んだか（token は「古い読み上げ」の合図を無視するための番号）
-function stopSpeech() { stopShadow(); PL.token++; PL.playing = false; if ('speechSynthesis' in window) speechSynthesis.cancel(); }
+function stopSpeech() { stopShadow(); lisPause(); PL.token++; PL.playing = false; if ('speechSynthesis' in window) speechSynthesis.cancel(); }
 function speak(text, opts = {}) {
   if (!('speechSynthesis' in window)) return toast('この端末は音声に未対応です');
+  if (!opts.fromLis && lis && lis.playing) lisPause();   // ほかの読み上げを始めたら、聞き流し・シャドーイングは止める
+  if (!opts.fromSh && sh) stopShadow();
   PL.token++; PL.playing = false; speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text);
-  u.lang = 'en-US'; if (opts.voice) u.voice = opts.voice; else if (voice) u.voice = voice; u.rate = S.settings.rate;
+  u.lang = opts.lang || 'en-US'; if (opts.voice) u.voice = opts.voice; else if (!opts.lang || /^en/i.test(opts.lang)) { if (voice) u.voice = voice; } u.rate = opts.rate || S.settings.rate;
   if (opts.onboundary) u.onboundary = opts.onboundary;
   if (opts.onend) u.onend = opts.onend;
   speechSynthesis.speak(u);
@@ -479,7 +484,7 @@ function ic(n, s = 22, sw = 2.75) { return `<svg width="${s}" height="${s}" view
 /* ---------- 画面の切り替え ---------- */
 let tab = 'home', session = null, sheet = null, out = null;
 const TABS = [['home', 'home', 'ホーム'], ['diary', 'notebook', '日記'], ['read', 'book-open', '読む'], ['words', 'list', '単語帳'], ['set', 'sliders', '設定']];
-function go(t) { stopSpeech(); out = null; wiz = null; phil = false; tab = t; session = null; sheet = null; render(); window.scrollTo(0, 0); }
+function go(t) { stopSpeech(); out = null; wiz = null; phil = false; lisView = false; tab = t; session = null; sheet = null; render(); window.scrollTo(0, 0); }
 function render() {
   rollDay();
   const full = wiz || gen || genErr;   // 全画面の表示中は、下タブを隠す
@@ -490,6 +495,7 @@ function render() {
   if (tab === 'read' && S.notice && !S.notice.seen) { S.notice.seen = true; save(); }   // 読む画面を開いたら既読
   const dot = S.notice && !S.notice.seen ? '<span class="newdot"></span>' : '';   // 控えめなセージ色の点（赤いバッジはつけない）
   $('#nav').innerHTML = TABS.map(([k, i, n]) => `<button class="${tab === k ? 'on' : ''}" onclick="go('${k}')"><span class="pill">${ic(i, 24)}${k === 'read' ? dot : ''}</span>${n}</button>`).join('');
+  if (lisView && lis) return vListen();
   ({ home: vHome, diary: vDiary, read: vRead, words: vWords, set: vSet })[tab]();
 }
 
@@ -540,7 +546,7 @@ function reviewRowHtml() {
 function vHome() {
   if (session) return vReview();
   const date = new Date().toLocaleDateString('ja-JP', { month: 'long', day: 'numeric' });
-  $('#app').innerHTML = `<div class="hd"><h1>マイ英語</h1><span class="date">${date}</span></div>${noticeHtml(!S.essays[0])}${todayEssayHtml()}${reviewRowHtml()}${swipeHtml()}${rereadHtml()}`;
+  $('#app').innerHTML = `<div class="hd"><h1>マイ英語</h1><span class="date">${date}</span></div>${noticeHtml(!S.essays[0])}${todayEssayHtml()}${reviewRowHtml()}${swipeHtml()}${rereadHtml()}${listenHtml()}`;
   hPlayUI();
 }
 function startReview() {
@@ -744,7 +750,7 @@ function vRead() {
     return;
   }
   const isEn = !e || rtab === 'en'; let body;
-  if (isEn) body = `<div id="reader"></div>${t ? shHtml() : ''}
+  if (isEn) body = `<div id="reader"></div>${t ? shHtml() : ''}${e ? `<button class="btn soft" style="margin-bottom:14px" onclick="lisStart('one')">${ic('volume', 18)}この英文を聞き流す</button>` : ''}
     <details ${t ? '' : 'open'}><summary>自分で英文を貼り付ける</summary><div style="margin-top:8px"><textarea id="txt" placeholder="Paste English text here...">${esc(t)}</textarea><button class="btn soft" style="margin-top:10px" onclick="loadText()">読み込む</button></div></details>${e && t ? nextHtml() : ''}${t ? playerHtml() : ''}`;
   else if (rtab === 'ja') body = transHtml();
   else if (rtab === 'words') body = redoHtml() + candHtml();
@@ -1182,7 +1188,7 @@ function shStep(run) {
   if (!sh || sh.run !== run) return;
   if (sh.i >= sh.list.length) { sh = null; updateSh(); toast('シャドーイング、おつかれさま！'); return; }
   const t = sh.list[sh.i]; sh.phase = 'listen'; updateSh();
-  speak(t, { onend: () => {
+  speak(t, { fromSh: true, onend: () => {
     if (!sh || sh.run !== run) return; sh.phase = 'speak'; updateSh();
     sh.timer = setTimeout(() => { if (!sh || sh.run !== run) return; sh.i++; shStep(run); }, Math.max(1800, t.length * 85 / (S.settings.rate || 1)));   // あなたの番（文の長さに合わせて待つ）
   } });
@@ -1250,7 +1256,7 @@ const PHIL = [
   { t: 'ちょうどよいむずかしさで、たくさん読む・聞く', lv: '中', body: '文章の98%くらいの単語がわかると、助けなしで読みやすいという研究があります（95〜98%と幅があります）。日本の大学生の多読の研究では、新しい単語を覚えるより「読む速さ」がのびやすく、たくさん読むほど効果が出ました。', app: '日記をもとに、新しい単語が約2〜5%になる英文をAIがつくります。「やさしさ」の設定と、読んだあとの「むずかしさの評価」で、あなたに合わせます。', src: [['Schmitt, Jiang & Grabe (2011)', 'https://www.lextutor.ca/cover/papers/schmitt_etal_2011.pdf'], ['Hu & Nation (2000)など', 'https://experts.nau.edu/en/publications/the-percentage-of-words-known-in-a-text-and-reading-comprehension/']] },
   { t: '間隔をあけて、くり返す', lv: '強', body: '同じことを一気にやるより、間隔をあけて復習したほうが、長く覚えていられます。ちょうどよい間隔は、覚えておきたい期間が長いほど長くなります。間隔を少しずつ広げる方式と、同じ間隔の方式の差は小さく、研究で結果が分かれます。', app: '単語は、思い出せた度合いに応じて、1日→3日→…と復習日が広がります。英文も、1・3・7日後に「もう一度読もう」と知らせます。', src: [['Cepeda ほか (2006)', 'https://pubmed.ncbi.nlm.nih.gov/16719566/'], ['Uchihara, Webb & Yanagisawa (2019)', 'https://doi.org/10.1111/lang.12343']] },
   { t: '思い出す練習をする', lv: '中', body: '読み直すより、「思い出そうとする」ほうが記憶に残りやすいことが、多くの研究で示されています。外国語の単語では、条件によって差があり、むずかしい内容ほど、はっきり声や文字に出して思い出す練習が向いています。', app: 'おさらいは、先に思い出してから答えを見ます。2回目以降は、日本語の意味から、英語を思い出す「穴埋め」になります。', src: [['Educational Psychology Review (2025)', 'https://link.springer.com/article/10.1007/s10648-025-10040-4']] },
-  { t: '音声つきで、くり返し読む', lv: '中', body: '日本の大学生で、音声つきのくり返し読みは、たくさん読む（多読）と同じくらい、黙読の速さをのばしました。聞きながら読むと、言葉のくみあわせ（連語）も覚えやすいという研究もあります（台湾の大学生）。', app: '読み上げ中に単語が色づき、止めても「続きから」再生できます。「もう一度読もう」で、くり返し読みをすすめます。', src: [['Taguchi ほか（読む速さの研究）', 'https://scholarspace.manoa.hawaii.edu/handle/10125/66783'], ['Webb & Chang（連語の研究）', 'https://www.cambridge.org/core/journals/studies-in-second-language-acquisition/article/how-does-mode-of-input-affect-the-incidental-learning-of-collocations/CCA20D5A9DF56046DCB84648DCFAC554']] },
+  { t: '音声つきで、くり返し読む', lv: '中', body: '日本の大学生で、音声つきのくり返し読みは、たくさん読む（多読）と同じくらい、黙読の速さをのばしました。聞きながら読むと、言葉のくみあわせ（連語）も覚えやすいという研究もあります（台湾の大学生）。', app: '読み上げ中に単語が色づき、止めても「続きから」再生できます。「もう一度読もう」で、くり返し読みをすすめます。学んだ英文を「聞き流し」（英文→日本語訳→英文）で、くり返し聞けます。', src: [['Taguchi ほか（読む速さの研究）', 'https://scholarspace.manoa.hawaii.edu/handle/10125/66783'], ['Webb & Chang（連語の研究）', 'https://www.cambridge.org/core/journals/studies-in-second-language-acquisition/article/how-does-mode-of-input-affect-the-incidental-learning-of-collocations/CCA20D5A9DF56046DCB84648DCFAC554']] },
   { t: 'シャドーイング（聞いて、すぐ追いかけて言う）', lv: '少', body: '日本の教室での研究が多く、聞き取り（音を単語として聞き分ける力）の向上と結びついています。初級〜中級の人に向くと言われます。負担や不安が出ることもあるので、無理せず短く。', app: '「英文」タブの「シャドーイング」で、1文ずつ聞いて、あなたの番に声に出して追いかけます。', src: [['Shadowing: What is It? How to Use It? (RELC Journal)', 'https://journals.sagepub.com/doi/10.1177/0033688218771380']] },
   { t: '自分で書く・話す・日本語を英語にする', lv: '少', body: '自分で使ってみると、「言いたいのに言えない」に気づけます（Swainのアウトプット仮説）。日本人学習者だけを比べた実験は少なめです。単語の学習では、決まった意味を英語にする課題（和文英訳）が有効という報告もあります。', app: '「練習」タブで、英作文・会話・和文英訳ができます。', src: [['Swain & Lapkin (1995)', 'https://doi.org/10.2307/3587952']] },
   { t: '直しは少数に絞って、あとで復習する', lv: '中', body: '書いた文章への訂正は、正確さを少し高めます（小〜中程度の効果）。直す方法の違い（直接か間接か、絞るか絞らないか）による差は、見つかっていません。', app: '直すところは最大3つ。「直した表現」として、おさらいに入り、あとで思い出す練習ができます。', src: [['Kang & Han (2015)', 'https://doi.org/10.1111/modl.12189']] },
@@ -1361,6 +1367,104 @@ function weaveWords() {
   const unsure = vocab().filter(c => c.fb && c.fb.kind === 'unsure').sort((a, b) => a.fb.last - b.fb.last);
   const dueW = dueCards().filter(c => c.kind !== 'fix' && !(c.fb && c.fb.kind === 'ok' && c.fb.streak >= 3));
   return [...new Set([...unsure, ...dueW].map(c => c.word))].slice(0, 4);
+}
+
+/* ---------- 聞き流し（英文 → 日本語訳 → 英文。最後に単語と文法の解説）：すでに学んだ英文の、復習用 ---------- */
+let lis = null, lisView = false, wakeLock = null;   // lis: { items, E, scope, i, playing, run, timer }
+const LIS_LABEL = { intro: 'はじまり', title: 'タイトル', en: '英文', ja: '日本語訳', en2: 'もう一度', h: '単語のポイント', w: '単語のポイント', wj: '単語のポイント', gh: '文法のポイント', g: '文法のポイント', ge: '文法のポイント' };
+function lisOpt() { return Object.assign({ ja: true, twice: true, exp: true }, S.settings.lis || {}); }
+function jaVoiceObj() { const v = ('speechSynthesis' in window ? speechSynthesis.getVoices() : []).filter(x => /^ja/i.test(x.lang)); return v.sort((a, b) => voiceScore(b) - voiceScore(a))[0] || null; }
+function lisEssays(scope) { return scope === 'one' && curEssay() ? [curEssay()] : S.essays.slice(0, 5); }
+function buildListen(scope) {
+  const o = lisOpt(), items = [], E = lisEssays(scope);
+  E.forEach((e, ei) => {
+    const sents = e.sentences && e.sentences.length ? e.sentences : (e.text || '').split(/(?<=[.!?])\s+/).map(x => x.trim()).filter(Boolean).map(en => ({ en, ja: '' }));
+    items.push({ lang: 'ja', text: E.length > 1 ? (ei + 1) + '本目の英文です。' : '英文です。', ei, si: -1, kind: 'intro' });
+    if (e.title) items.push({ lang: 'en', text: e.title, ei, si: -1, kind: 'title' });
+    sents.forEach((s, si) => {
+      items.push({ lang: 'en', text: s.en, ei, si, kind: 'en' });
+      if (o.ja && s.ja) items.push({ lang: 'ja', text: s.ja, ei, si, kind: 'ja' });
+      if (o.twice) items.push({ lang: 'en', text: s.en, ei, si, kind: 'en2' });
+    });
+    if (o.exp) {
+      const W = (e.words || []).slice(0, 5), G = (e.grammar || []).slice(0, 3);
+      if (W.length) { items.push({ lang: 'ja', text: '単語のポイントです。', ei, si: -2, kind: 'h' }); W.forEach(w => { items.push({ lang: 'en', text: w.word, ei, si: -2, kind: 'w' }); items.push({ lang: 'ja', text: w.meaning, ei, si: -2, kind: 'wj' }); }); }
+      if (G.length) { items.push({ lang: 'ja', text: '文法のポイントです。', ei, si: -3, kind: 'gh' }); G.forEach(g => { items.push({ lang: 'ja', text: g.point + '。' + (g.explain || ''), ei, si: -3, kind: 'g' }); if (g.example) items.push({ lang: 'en', text: g.example, ei, si: -3, kind: 'ge' }); }); }
+    }
+  });
+  return { items, E };
+}
+async function wakeOn() { try { if ('wakeLock' in navigator && !wakeLock) { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener && wakeLock.addEventListener('release', () => { wakeLock = null; }); } } catch (e) { wakeLock = null; } }
+function wakeOff() { try { if (wakeLock) wakeLock.release(); } catch (e) {} wakeLock = null; }
+function lisStart(scope) {
+  if (!('speechSynthesis' in window)) return toast('この端末は音声に未対応です');
+  stopSpeech(); const b = buildListen(scope); if (!b.items.length) return toast('聞き流す英文がありません');
+  lis = Object.assign(b, { scope, i: 0, playing: false, run: 0, timer: 0 }); lisView = true; render(); window.scrollTo(0, 0); lisPlay();
+}
+function lisPlay() { if (!lis) return; if (lis.i >= lis.items.length) lis.i = 0; lis.playing = true; lis.run = Date.now(); wakeOn(); lisStep(lis.run); }
+function lisStep(run) {
+  if (!lis || lis.run !== run || !lis.playing) return;
+  if (lis.i >= lis.items.length) { lis.playing = false; wakeOff(); updateLis(); toast('聞き流し、おわりました'); return; }
+  const it = lis.items[lis.i], ja = it.lang === 'ja'; updateLis();
+  speak(it.text, { fromLis: true, lang: ja ? 'ja-JP' : 'en-US', voice: ja ? jaVoiceObj() : null, rate: ja ? 1.05 : S.settings.rate, onend: () => {
+    if (!lis || lis.run !== run || !lis.playing) return;
+    const nx = lis.items[lis.i + 1], gap = !nx ? 0 : (nx.si !== it.si || nx.ei !== it.ei ? 900 : 350);   // 文が変わるときは、少し長めの間
+    lis.i++; lis.timer = setTimeout(() => lisStep(run), gap);
+  } });
+}
+function lisPause() { if (!lis || !lis.playing) return; lis.playing = false; lis.run = 0; clearTimeout(lis.timer); PL.token++; if ('speechSynthesis' in window) speechSynthesis.cancel(); wakeOff(); updateLis(); }
+function lisToggle() { if (!lis) return; if (lis.playing) lisPause(); else lisPlay(); }
+function lisSkip(dir) {   // 前の文／次の文へ
+  if (!lis) return; const key = x => x.ei + ':' + x.si, cur = lis.items[Math.min(lis.i, lis.items.length - 1)], k = key(cur);
+  let j = lis.i;
+  if (dir > 0) { while (j < lis.items.length && key(lis.items[j]) === k) j++; }
+  else { let a = j; while (a > 0 && key(lis.items[a - 1]) === k) a--; if (a < j) j = a; else { j = a - 1; if (j < 0) j = 0; const k2 = key(lis.items[j]); while (j > 0 && key(lis.items[j - 1]) === k2) j--; } }
+  lis.i = Math.min(j, lis.items.length); clearTimeout(lis.timer);
+  if (lis.playing) { lis.run = Date.now(); lisStep(lis.run); } else updateLis();
+}
+function lisRate() {
+  const R = [0.7, 0.8, 0.9, 1, 1.1, 1.2], i = R.findIndex(x => Math.abs(x - S.settings.rate) < 0.01);
+  S.settings.rate = R[(i + 1) % R.length]; save(); const b = $('#lisspd'); if (b) b.textContent = S.settings.rate + '×';
+  if (lis && lis.playing) { clearTimeout(lis.timer); lis.run = Date.now(); lisStep(lis.run); }   // いまの部分から、新しい速さで
+}
+function lisSetOpt(k, v) {   // 流し方を変えたら、いまの英文の、はじめから
+  S.settings.lis = Object.assign(lisOpt(), { [k]: v }); save(); if (!lis) return;
+  const ei = lis.items[Math.min(lis.i, lis.items.length - 1)].ei, was = lis.playing; lisPause();
+  Object.assign(lis, buildListen(lis.scope)); lis.i = Math.max(0, lis.items.findIndex(x => x.ei === ei)); render(); if (was) lisPlay();
+}
+function lisClose() { lisPause(); lis = null; lisView = false; render(); }
+document.addEventListener('visibilitychange', () => {   // 画面がもどったら、止まっていた部分から再開
+  if (!document.hidden && lis && lis.playing) { wakeOn(); clearTimeout(lis.timer); lis.run = Date.now(); lisStep(lis.run); }
+});
+function updateLis() {
+  const el = $('#lisbox'); if (el) el.outerHTML = lisBoxHtml();
+  const b = $('#lisplay'); if (b && lis) { b.innerHTML = ic(lis.playing ? 'pause' : 'play', 30); b.setAttribute('aria-label', lis.playing ? '一時停止' : '再生'); }
+}
+function lisBoxHtml() {
+  const L = lis, it = L.items[Math.min(L.i, L.items.length - 1)], e = L.E[it.ei], s = it.si >= 0 && e.sentences && e.sentences[it.si];
+  const done = L.i >= L.items.length, pct = Math.round(Math.min(L.i, L.items.length) / L.items.length * 100);
+  return `<div class="rpanel" id="lisbox"><div class="sub" style="font-weight:700;display:flex;justify-content:space-between"><span>${it.ei + 1} / ${L.E.length}本</span><span class="chip ${it.lang === 'ja' ? '' : 'sage'}" style="font-size:calc(var(--fs,1)*12px)">${done ? 'おわり' : LIS_LABEL[it.kind] || ''}</span></div>
+    <div style="font:calc(var(--fs,1)*15px) var(--font-en-display);color:var(--color-neutral-700);margin-top:6px">${esc(e.title || '')}</div>
+    <div style="font:calc(var(--fs,1)*21px)/1.7 var(--font-en-display);margin:10px 0 4px">${esc(s ? s.en : it.text)}</div>
+    ${s && s.ja && lisOpt().ja ? `<div style="font:700 calc(var(--fs,1)*15px)/1.6 var(--font-body);color:var(--color-neutral-700)">${esc(s.ja)}</div>` : ''}
+    <div class="progress" style="margin:14px 0 0"><i style="width:${pct}%"></i></div></div>`;
+}
+function vListen() {
+  const o = lisOpt(), one = lis && lis.scope === 'one';
+  $('#app').innerHTML = `<div class="rhead"><h1 style="font-family:var(--font-heading);font-size:calc(var(--fs,1)*28px)">聞き流し</h1><button class="iconbtn" onclick="lisClose()" aria-label="とじる">${ic('x', 22)}</button></div>
+  <p class="sub" style="font-weight:700;margin:-6px 0 12px">英文 → 日本語訳 → 英文の順に流します。最後に、単語と文法の解説も。</p>
+  ${lisBoxHtml()}
+  <div class="lisctl"><button class="sbtn" onclick="lisSkip(-1)" aria-label="前の文">${ic('chevron-left', 28)}</button><button class="play64" id="lisplay" onclick="lisToggle()" aria-label="${lis.playing ? '一時停止' : '再生'}">${ic(lis.playing ? 'pause' : 'play', 30)}</button><button class="sbtn" onclick="lisSkip(1)" aria-label="次の文">${ic('chevron-right', 28)}</button><button class="speed" id="lisspd" onclick="lisRate()" aria-label="英語の速さ">${S.settings.rate}×</button></div>
+  <div class="card"><b style="font:700 calc(var(--fs,1)*16px) var(--font-heading)">流し方</b>
+    <label class="chkrow"><input type="checkbox" ${o.ja ? 'checked' : ''} onchange="lisSetOpt('ja',this.checked)">日本語訳を入れる</label>
+    <label class="chkrow"><input type="checkbox" ${o.twice ? 'checked' : ''} onchange="lisSetOpt('twice',this.checked)">英文を、もう一度くり返す</label>
+    <label class="chkrow"><input type="checkbox" ${o.exp ? 'checked' : ''} onchange="lisSetOpt('exp',this.checked)">最後に、単語と文法の解説</label>
+    ${curEssay() ? `<div class="pills" style="margin-top:6px"><button class="${one ? '' : 'on'}" onclick="lisStart('recent')">最近の${Math.min(5, S.essays.length)}本</button><button class="${one ? 'on' : ''}" onclick="lisStart('one')">この英文だけ</button></div>` : ''}</div>
+  <p class="sub" style="margin:4px 4px 0">${'wakeLock' in navigator ? '聞き流しているあいだは、画面が自動で消えないようにしています。' : ''}iPhoneなどでは、画面を消したり、ほかのアプリに切りかえたりすると、止まることがあります。もどると、続きから流れます。一度読んで意味がわかった英文を、くり返し聞くのがおすすめです。</p>`;
+}
+function listenHtml() {   // ホームの入口
+  if (!S.essays.length) return '';
+  return `<div class="card rrow"><div class="circ">${ic('volume', 26)}</div><div class="rtxt"><b>聞き流し</b><div class="sub">最近の${Math.min(5, S.essays.length)}本を、英語 → 日本語 → 英語で</div></div><button class="btn soft" onclick="lisStart('recent')">流す</button></div>`;
 }
 
 /* ---------- 単語帳（一覧の続き） ---------- */

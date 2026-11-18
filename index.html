@@ -338,6 +338,13 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 .sent .w.saved{border-bottom:3px solid var(--color-accent-2-600)}
 .sent .w.tapped{background:var(--color-accent-300)}
 .legend2{margin:0 4px 12px}
+.swwrap{position:relative;margin-top:4px}
+.swcard{background:var(--color-neutral-100);border-radius:var(--radius-lg);padding:26px 22px;box-shadow:var(--shadow-md);min-height:330px;display:flex;flex-direction:column;gap:14px;touch-action:pan-y;user-select:none;-webkit-user-select:none;cursor:grab;will-change:transform}
+.swcard .word.sm{font:400 calc(var(--fs,1)*44px)/1.1 var(--font-en-display)}
+.swhint{position:absolute;top:14px;z-index:2;padding:6px 16px;border-radius:var(--radius-pill);font:700 calc(var(--fs,1)*14px) var(--font-heading);opacity:0;pointer-events:none}
+.swhint.ok{left:14px;background:var(--color-accent-2-200);color:var(--color-accent-2-800)}
+.swhint.no{right:14px;background:var(--color-accent-200);color:var(--color-accent-800)}
+.linkbtn:disabled{opacity:.4}
 </style>
 </head>
 <body>
@@ -463,6 +470,7 @@ const IC = {
   'alert': '<circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/>',
   'send': '<path d="m22 2-7 20-4-9-9-4z"/><path d="M22 2 11 13"/>',
   'chevron-right': '<path d="m9 18 6-6-6-6"/>',
+  'chevron-left': '<path d="m15 18-6-6 6-6"/>',
   'chevron-down': '<path d="m6 9 6 6 6-6"/>',
   'clock': '<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>'
 };
@@ -532,7 +540,7 @@ function reviewRowHtml() {
 function vHome() {
   if (session) return vReview();
   const date = new Date().toLocaleDateString('ja-JP', { month: 'long', day: 'numeric' });
-  $('#app').innerHTML = `<div class="hd"><h1>マイ英語</h1><span class="date">${date}</span></div>${noticeHtml(!S.essays[0])}${todayEssayHtml()}${reviewRowHtml()}${rereadHtml()}`;
+  $('#app').innerHTML = `<div class="hd"><h1>マイ英語</h1><span class="date">${date}</span></div>${noticeHtml(!S.essays[0])}${todayEssayHtml()}${reviewRowHtml()}${swipeHtml()}${rereadHtml()}`;
   hPlayUI();
 }
 function startReview() {
@@ -1139,13 +1147,18 @@ async function makeEssay(id) {
 }
 
 function vWords() {
-  const list = vocab().sort((a, b) => b.createdAt - a.createdAt), flist = fixCards().sort((a, b) => b.createdAt - a.createdAt);
+  if (swipe) return vSwipe();
+  const rank = c => ({ unsure: 0, new: 1, ok: 2 })[fbState(c)], cnt = { all: vocab().length, unsure: 0, new: 0, ok: 0 };
+  vocab().forEach(c => { cnt[fbState(c)]++; });
+  const list = vocab().filter(c => wfilter === 'all' || fbState(c) === wfilter).sort((a, b) => rank(a) - rank(b) || b.createdAt - a.createdAt), flist = fixCards().sort((a, b) => b.createdAt - a.createdAt);
   const sp = t => `data-t="${esc(t)}" onclick="speak(this.dataset.t)"`;
   $('#app').innerHTML = `<div class="hd"><h1>単語帳</h1><span class="date">${vocab().length}語</span></div>
   <button class="foldrow" onclick="addOpen=!addOpen;render()">単語を追加${ic(addOpen ? 'x' : 'plus', 22)}</button>
   ${addOpen ? `<div class="card"><label style="margin-top:0">英単語・フレーズ</label><input id="nw" autocapitalize="off"><label>意味</label><input id="nm"><label>例文（なくてもOK）</label><input id="ne">
     <button class="btn" style="margin-top:12px" onclick="addManual()">追加</button></div>` : ''}
-  <div class="card" style="padding:6px 18px">${list.length ? list.map(c => { const ja = exJaFor(c); return `<div class="wrow2"><div class="wrow" style="padding:0;border:0"><div class="wt"><div class="wd">${esc(c.word)}</div><div class="mn">${esc(c.meaning)}</div></div>
+  ${vocab().length ? `<button class="btn" style="margin-bottom:12px" onclick="startSwipe()" ${swDeck().length ? '' : 'disabled'}>ふりかえる（${swDeck().length}語）</button>
+  <div class="pills" style="flex-wrap:wrap">${[['all', 'すべて'], ['unsure', 'まだ不安'], ['new', 'はじめて'], ['ok', 'オッケー']].map(([k, v]) => `<button class="${wfilter === k ? 'on' : ''}" onclick="wfilter='${k}';render()">${v} ${cnt[k]}</button>`).join('')}</div>` : ''}
+  <div class="card" style="padding:6px 18px">${list.length ? list.map(c => { const ja = exJaFor(c); return `<div class="wrow2"><div class="wrow" style="padding:0;border:0"><div class="wt"><div class="wd">${esc(c.word)} ${fbChip(c)}</div><div class="mn">${esc(c.meaning)}</div></div>
       <button class="iconbtn sm" ${sp(c.word)} aria-label="単語を聴く">${ic('volume', 18)}</button><button class="x" onclick="delCard('${c.id}')" aria-label="消す">${ic('x', 20)}</button></div>
     ${c.note ? `<div class="sub" style="font-weight:700;margin-top:4px">${esc(c.note)}</div>` : ''}
     ${c.example ? `<div class="exbox sm"><div class="exl"><span>${esc(c.example)}</span><button class="iconbtn sm" ${sp(c.example)} aria-label="例文を聴く">${ic('volume', 16)}</button></div>${ja ? `<div class="ja">${esc(ja)}</div>` : ''}</div>` : ''}</div>`; }).join('') : '<p class="sub center" style="padding:14px 0">まだありません</p>'}</div>
@@ -1256,6 +1269,100 @@ function vPhil() {
   <p class="sub" style="margin:14px 4px">※ 研究は、論文の要旨や、ほかの論文での紹介をもとにまとめました。くわしくは、リポジトリの「docs/設計思想.md」にも書いてあります。</p>`;
 }
 
+/* ---------- 単語のふりかえり（スワイプ）：左＝オッケー／右＝まだ不安。記録して、目に触れる単語を調整する ---------- */
+const SW_DAYS = [1, 3, 7, 14, 30];   // オッケーが続くほど、次にふりかえりに出るまでの間をあける（日）
+let swipe = null, swDrag = null, wfilter = 'all';
+const fbState = c => c.fb && c.fb.kind === 'unsure' ? 'unsure' : c.fb ? 'ok' : 'new';
+function fbChip(c) {
+  const f = c.fb; if (!f) return '';
+  return f.kind === 'unsure' ? '<span class="chip" style="font-size:calc(var(--fs,1)*11px);padding:2px 8px;vertical-align:middle">まだ不安</span>'
+    : `<span class="chip sage" style="font-size:calc(var(--fs,1)*11px);padding:2px 8px;vertical-align:middle">オッケー${f.streak > 1 ? ' ×' + f.streak : ''}</span>`;
+}
+// ふりかえりに出す単語：①まだ不安（間をおいたもの）→ ②はじめて見る → ③オッケーだったが、間をあけて、もう一度（1回20語まで）
+function swDeck() {
+  const now = Date.now(), v = vocab(), ready = c => (c.fb.next || 0) <= now;
+  const A = v.filter(c => c.fb && c.fb.kind === 'unsure' && ready(c)).sort((a, b) => (a.fb.next || 0) - (b.fb.next || 0));
+  const B = v.filter(c => !c.fb).sort((a, b) => b.createdAt - a.createdAt);
+  const C = v.filter(c => c.fb && c.fb.kind === 'ok' && ready(c)).sort((a, b) => (a.fb.next || 0) - (b.fb.next || 0));
+  return [...A, ...B, ...C].slice(0, 20).map(c => c.id);
+}
+function startSwipe(ids) { const q = ids || swDeck(); if (!q.length) return toast('いま、ふりかえる単語はありません'); swipe = { q, i: 0, ok: 0, unsure: 0, hist: [], busy: false }; render(); window.scrollTo(0, 0); }
+function swRetry() { startSwipe([...new Set(swipe.hist.filter(h => h.kind === 'unsure').map(h => h.id))]); }
+// フィードバックを、カードに記録して、出し方を調整する
+function applyFeedback(c, kind) {
+  const f = c.fb = c.fb || { ok: 0, unsure: 0, streak: 0, last: 0, kind: null, next: 0 }, now = Date.now();
+  f.last = now; f.kind = kind;
+  if (kind === 'ok') { f.ok++; f.streak++; f.next = now + SW_DAYS[Math.min(f.streak - 1, SW_DAYS.length - 1)] * 864e5; }   // オッケー：間をあけて、また
+  else { f.unsure++; f.streak = 0; f.next = now + 10 * 60 * 1000; c.due = Math.min(c.due, now); c.ease = Math.max(1.3, (c.ease || 2.5) - 0.1); }   // まだ不安：すぐおさらいに出し、ふりかえりにも早く戻す
+  S.swipeLog = [{ id: c.id, w: c.word, k: kind, t: now }, ...(S.swipeLog || [])].slice(0, 300);
+}
+function swCommit(kind) {
+  if (!swipe || swipe.busy || swipe.i >= swipe.q.length) return; swipe.busy = true;
+  const el = $('#swcard'), d = kind === 'ok' ? -1 : 1;
+  if (el) { el.style.transition = 'transform .22s, opacity .22s'; el.style.transform = `translateX(${d * 520}px) rotate(${d * 14}deg)`; el.style.opacity = '0'; }
+  setTimeout(() => swApply(kind), el ? 210 : 0);
+}
+function swApply(kind) {
+  const s = swipe; if (!s) return; const id = s.q[s.i], c = S.cards.find(x => x.id === id);
+  if (c) { s.hist.push({ id, kind, fb: c.fb ? JSON.stringify(c.fb) : null, due: c.due, ease: c.ease }); applyFeedback(c, kind); s[kind]++; }
+  s.i++; s.busy = false; save(); render();
+}
+function swUndo() {
+  const s = swipe; if (!s || s.busy || !s.hist.length) return; const h = s.hist.pop(), c = S.cards.find(x => x.id === h.id);
+  if (c) { c.fb = h.fb ? JSON.parse(h.fb) : undefined; if (!h.fb) delete c.fb; c.due = h.due; c.ease = h.ease; S.swipeLog = (S.swipeLog || []).slice(1); s[h.kind]--; }
+  s.i = Math.max(0, s.i - 1); save(); render();
+}
+// ゆびで動かす（左右へ引っぱって、はなす）
+function swDown(ev) { if (!swipe || swipe.busy || ev.target.closest('button')) return; const el = ev.currentTarget; swDrag = { x: ev.clientX, dx: 0 }; try { el.setPointerCapture(ev.pointerId); } catch (e) {} el.style.transition = 'none'; }
+function swMove(ev) {
+  if (!swDrag) return; swDrag.dx = ev.clientX - swDrag.x; const el = ev.currentTarget, w = Math.min(1, Math.abs(swDrag.dx) / 110);
+  el.style.transform = `translateX(${swDrag.dx}px) rotate(${swDrag.dx / 18}deg)`;
+  const a = document.querySelector('.swhint.ok'), b = document.querySelector('.swhint.no'); if (a) a.style.opacity = swDrag.dx < 0 ? w : 0; if (b) b.style.opacity = swDrag.dx > 0 ? w : 0;
+}
+function swUp(ev) {
+  if (!swDrag) return; const dx = swDrag.dx, el = ev.currentTarget; swDrag = null;
+  if (Math.abs(dx) > 90) return swCommit(dx < 0 ? 'ok' : 'unsure');
+  el.style.transition = 'transform .2s'; el.style.transform = '';   // 足りなければ、もどる
+  document.querySelectorAll('.swhint').forEach(h => { h.style.opacity = 0; });
+}
+document.addEventListener('keydown', ev => { if (swipe && tab === 'words' && !swipe.busy && swipe.i < swipe.q.length) { if (ev.key === 'ArrowLeft') swCommit('ok'); else if (ev.key === 'ArrowRight') swCommit('unsure'); } });
+function vSwipe() {
+  const s = swipe, n = s.q.length;
+  if (s.i >= n) return swEnd();
+  const c = S.cards.find(x => x.id === s.q[s.i]);
+  if (!c) { s.i++; return vSwipe(); }   // 消された単語は、とばす
+  const ja = exJaFor(c), sp = t => `data-t="${esc(t)}" onclick="speak(this.dataset.t)"`, f = c.fb;
+  $('#app').innerHTML = `<div class="hd"><h1>ふりかえり</h1><span class="sub" style="font:400 calc(var(--fs,1)*17px) var(--font-en-display)">${s.i + 1} / ${n}</span></div>
+  <div class="progress"><i style="width:${Math.round(s.i / n * 100)}%"></i></div>
+  <p class="sub center" style="font-weight:700;margin:0 0 10px">目を通したら、<b>左へ：オッケー</b>　<b>右へ：まだ不安</b></p>
+  <div class="swwrap"><div class="swhint ok">オッケー</div><div class="swhint no">まだ不安</div>
+    <div class="swcard" id="swcard" onpointerdown="swDown(event)" onpointermove="swMove(event)" onpointerup="swUp(event)" onpointercancel="swUp(event)">
+      ${f && f.kind === 'unsure' ? `<span class="chip" style="align-self:flex-start">まだ不安 ×${f.unsure}</span>` : f ? `<span class="chip sage" style="align-self:flex-start">オッケー ×${f.ok}</span>` : '<span class="chip gray" style="align-self:flex-start;font-family:var(--font-body)">はじめて</span>'}
+      <div style="display:flex;align-items:center;gap:12px"><span class="word sm">${esc(c.word)}</span><button class="iconbtn sm" ${sp(c.word)} aria-label="単語を聴く">${ic('volume', 20)}</button></div>
+      <div class="mean">${esc(c.meaning)}</div>${c.note ? `<div class="sub" style="font-weight:700">${esc(c.note)}</div>` : ''}
+      ${c.example ? `<div class="exbox"><div class="exl"><span>${esc(c.example)}</span><button class="iconbtn sm" ${sp(c.example)} aria-label="例文を聴く">${ic('volume', 16)}</button></div>${ja ? `<div class="ja">${esc(ja)}</div>` : ''}</div>` : ''}
+    </div></div>
+  <div class="row" style="margin-top:14px"><button class="btn soft" onclick="swCommit('ok')">${ic('chevron-left', 20)}オッケー</button><button class="btn" onclick="swCommit('unsure')">まだ不安${ic('chevron-right', 20)}</button></div>
+  <div style="display:flex;justify-content:space-between;margin-top:6px"><button class="linkbtn" onclick="swUndo()" ${s.hist.length ? '' : 'disabled style="opacity:.4"'}>ひとつもどす</button><button class="linkbtn" onclick="swipe=null;render()">やめる</button></div>`;
+}
+function swEnd() {
+  const s = swipe, un = new Set(s.hist.filter(h => h.kind === 'unsure').map(h => h.id)).size;
+  $('#app').innerHTML = `<div class="hd"><h1>ふりかえり</h1></div><div class="rpanel center"><span class="ci ok" style="margin:0 auto 10px;width:56px;height:56px">${ic('check', 30)}</span><b style="font:700 calc(var(--fs,1)*18px) var(--font-heading)">おつかれさま！</b>
+    <div class="row" style="margin:14px 0 8px"><div class="card" style="margin:0;padding:12px"><div class="sub" style="font-weight:700">オッケー</div><div style="font:calc(var(--fs,1)*28px) var(--font-en-display)">${s.ok}</div></div><div class="card" style="margin:0;padding:12px"><div class="sub" style="font-weight:700">まだ不安</div><div style="font:calc(var(--fs,1)*28px) var(--font-en-display)">${s.unsure}</div></div></div>
+    <p class="sub" style="text-align:left;margin:0 0 14px">まだ不安な語は、おさらいと、これからの英文に、多く出てきます。オッケーな語は、間をあけて、また出てきます。</p>
+    <div class="stack">${un ? `<button class="btn" onclick="swRetry()">まだ不安だった語を、もう一度（${un}語）</button>` : ''}<button class="btn ${un ? 'ghost' : ''}" onclick="swipe=null;render()">おわる</button></div></div>`;
+}
+function swipeHtml() {   // ホームの、小さなお知らせ（ふりかえる単語があるとき）
+  const n = swDeck().length; if (!n) return '';
+  return `<div class="card rrow"><div class="circ">${n}</div><div class="rtxt"><b>単語のふりかえり</b><div class="sub">目を通して、左：オッケー／右：まだ不安</div></div><button class="btn soft" onclick="tab='words';session=null;startSwipe()">ひらく</button></div>`;
+}
+// 英文にこっそり混ぜる単語：まだ不安な語を先に、つぎに、おさらい間近の語。オッケーが続いている語は、へらす
+function weaveWords() {
+  const unsure = vocab().filter(c => c.fb && c.fb.kind === 'unsure').sort((a, b) => a.fb.last - b.fb.last);
+  const dueW = dueCards().filter(c => c.kind !== 'fix' && !(c.fb && c.fb.kind === 'ok' && c.fb.streak >= 3));
+  return [...new Set([...unsure, ...dueW].map(c => c.word))].slice(0, 4);
+}
+
 /* ---------- 単語帳（一覧の続き） ---------- */
 function delCard(id) { if (!confirm('これを消しますか？')) return; S.cards = S.cards.filter(c => c.id !== id); save(); render(); }
 
@@ -1355,7 +1462,7 @@ const TUTOR = 'You are a friendly English tutor for a Japanese adult learner. Re
 // 長い返事で切れないよう、①英文と日本語訳 ②単語と文法の解説 の2回に分けてつくる
 async function generateEssay(d, select, run) {
   const c = gcfg();
-  const due = dueCards().slice(0, 4).map(x => x.word);   // おさらい間近の単語を、英文にこっそり混ぜる
+  const due = weaveWords();   // おさらい間近の単語を、英文にこっそり混ぜる
   // 重複をさけるための「最近の記録」：話題・切り口
   const recent = S.essays.slice(0, 8), uniq = a => [...new Set(a.filter(Boolean))];
   const topics = uniq(recent.map(e => e.topic)).slice(0, 6), angles = uniq(recent.map(e => e.angle)).slice(0, 6);

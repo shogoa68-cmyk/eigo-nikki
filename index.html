@@ -334,6 +334,10 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 .exbox.sm{font-size:calc(var(--fs,1)*15px);padding:10px 14px;margin-top:8px}
 .rcard .word.fx{font-size:calc(var(--fs,1)*30px);line-height:1.3}
 .nextbtn{margin:0 0 8px}
+.sent .w{border-radius:4px;padding:0 1px;cursor:pointer}
+.sent .w.saved{border-bottom:3px solid var(--color-accent-2-600)}
+.sent .w.tapped{background:var(--color-accent-300)}
+.legend2{margin:0 4px 12px}
 </style>
 </head>
 <body>
@@ -599,13 +603,19 @@ function jaFor(sent) {   // 英文を1文ずつ訳したデータから、その
   const m = e.sentences.find(s => s.en.trim() === t || (t.length > 8 && (s.en.includes(t) || t.includes(s.en.trim()))));
   return m ? m.ja : '';
 }
-function tapWord(k) {
-  const w = words[k]; const word = S.text.slice(w.s, w.e).toLowerCase().replace(/^['’-]+|['’-]+$/g, '');
+function tapWord(k) {   // 英文タブ：本文の中の単語
+  const w = words[k]; openWordSheet(S.text.slice(w.s, w.e).toLowerCase().replace(/^['’-]+|['’-]+$/g, ''), sentenceAround(w.s));
+}
+function tapSentWord(el, si) {   // 訳タブ：1文ごとの英文の中の単語
+  const e = curEssay(), s = e && e.sentences[si]; if (!s) return;
+  openWordSheet(String(el.dataset.w).toLowerCase().replace(/^['’-]+|['’-]+$/g, ''), s.en, s.ja);
+}
+function openWordSheet(word, sent, ja) {
   speak(word);   // 本文の読み上げは止まるが、どこまで読んだかは覚えている
-  const sent = sentenceAround(w.s), card = vocab().find(c => c.word === word), e = curEssay();
+  const card = vocab().find(c => c.word === word), e = curEssay();
   const ew = e && e.words.find(x => String(x.word).toLowerCase() === word);
   const ck = word + '|' + hash(sent), cached = (S.dictCache || {})[ck], src = card || ew || cached;
-  sheet = { word, sent, ja: jaFor(sent), exists: !!card, meaning: src ? src.meaning : '', note: src ? (src.note || '') : '', ex2: cached ? cached.ex2 : '', ex2ja: cached ? cached.ex2ja : '', ck,
+  sheet = { word, sent, ja: ja !== undefined ? ja : jaFor(sent), exists: !!card, meaning: src ? src.meaning : '', note: src ? (src.note || '') : '', ex2: cached ? cached.ex2 : '', ex2ja: cached ? cached.ex2ja : '', ck,
     state: src ? 'ready' : (gcfg().ak ? 'loading' : 'nokey') };
   render();
   if (sheet.state === 'loading') lookupWord(sheet);
@@ -723,7 +733,7 @@ function vRead() {
   else if (rtab === 'gram') body = redoHtml() + grammarHtml();
   else body = outputHtml();
   if (e && rtab !== 'en' && rtab !== 'prac') body += nextHtml();   // 練習タブは、outputHtml の中で出す
-  $('#app').innerHTML = readHead(e) + (e ? tabsHtml() : '') + body + (isEn && sheet ? sheetHtml() : '');
+  $('#app').innerHTML = readHead(e) + (e ? tabsHtml() : '') + body + ((isEn || rtab === 'ja') && sheet ? sheetHtml() : '');
   if (isEn && t) { drawReader(t); pLabel(); }
 }
 function loadText() { S.text = $('#txt').value; const e = curEssay(); if (e && e.text !== S.text) S.essayId = null; save(); render(); }
@@ -762,7 +772,13 @@ function cycleRate() {
 }
 
 /* ---- 文法の色づけ（色 + 番号の形 + 線の種類） ---- */
-function hlText(text, marks) {
+let wordCtx = null;   // 訳タブで、単語帳に入っている単語・タップした単語に印をつけるための情報
+function wrapWords(seg, si) {   // 英文の断片を、1語ずつタップできる<span>にする
+  return seg.replace(/([A-Za-z][A-Za-z'’-]*)|([^A-Za-z]+)/g, (m, w, o) => { if (!w) return esc(o); const lw = w.toLowerCase();
+    return `<span class="w ${wordCtx && wordCtx.known.has(lw) ? 'saved' : ''} ${wordCtx && wordCtx.tapped === lw ? 'tapped' : ''}" data-w="${esc(w)}" onclick="tapSentWord(this,${si})">${esc(w)}</span>`; });
+}
+function hlText(text, marks, si) {
+  const seg = t => si === undefined ? esc(t) : wrapWords(t, si);
   const ranges = [];
   marks.forEach(({ m, i }) => {
     if (!m) return;
@@ -772,8 +788,8 @@ function hlText(text, marks) {
   });
   ranges.sort((a, b) => a[0] - b[0]);
   let out = '', pos = 0;
-  ranges.forEach(([a, b, i]) => { out += esc(text.slice(pos, a)) + `<mark class="g${i % 4 + 1}">${esc(text.slice(a, b))}</mark>`; pos = b; });
-  return out + esc(text.slice(pos));
+  ranges.forEach(([a, b, i]) => { out += seg(text.slice(pos, a)) + `<mark class="g${i % 4 + 1}">${seg(text.slice(a, b))}</mark>`; pos = b; });
+  return out + seg(text.slice(pos));
 }
 function marksFor(e, s) {   // その1文で使われている文法ポイント（例文がその文と同じとき）
   return (e.grammar || []).map((g, i) => ({ m: g.mark, i, ex: (g.example || '').trim() }))
@@ -784,8 +800,10 @@ function transHtml() {
   const e = curEssay(); if (!e) return '';
   if (!e.sentences || !e.sentences.length) return `<div class="rpanel"><p class="sub" style="margin:0">この英文には、日本語訳がありません（新しくつくった英文から付きます）。</p></div>`;
   const show = S.settings.showJa !== false;
+  wordCtx = { known: new Set(vocab().map(c => c.word)), tapped: sheet ? sheet.word : '' };
   return `<div class="rpanel" style="padding:6px 20px">${e.sentences.map((s, i) => { const mk = marksFor(e, s);
-      return `<div class="sent"><div class="en">${hlText(s.en, mk)}${mk.map(m => numBadge(m.i)).join('')} <button class="x" style="min-width:36px;min-height:36px" onclick="speakSent(${i})" aria-label="この文を聴く">${ic('volume', 18)}</button></div>${show ? `<div class="ja">${esc(s.ja)}</div>` : ''}</div>`; }).join('')}</div>
+      return `<div class="sent"><div class="en">${hlText(s.en, mk, i)}${mk.map(m => numBadge(m.i)).join('')} <button class="x" style="min-width:36px;min-height:36px" onclick="speakSent(${i})" aria-label="この文を聴く">${ic('volume', 18)}</button></div>${show ? `<div class="ja">${esc(s.ja)}</div>` : ''}</div>`; }).join('')}</div>
+    <p class="legend legend2">単語をタップすると、意味と例文が出ます。緑の線は、単語帳に入っている単語です。</p>
     <div style="display:flex;align-items:center;gap:12px;margin:0 0 12px"><button class="btn ${show ? 'soft' : 'ghost'}" style="width:auto;flex:none" onclick="S.settings.showJa=${!show};save();render()">${ic(show ? 'check' : 'plus', 18)}訳を表示</button><span class="sub" style="font-weight:700">オフにすると英文だけになります</span></div>`;
 }
 function grammarHtml() {

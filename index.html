@@ -359,6 +359,14 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 .pillbtn .badge{background:var(--color-accent);color:var(--on-accent,#fff);border-radius:var(--radius-pill);font:700 calc(var(--fs,1)*11px) var(--font-heading);padding:2px 7px;margin-left:2px}
 .shead.unread{color:var(--color-accent-700)}
 .erow.un{border-left:5px solid var(--color-accent-400)}
+.tip{background:var(--color-accent-2-100,var(--color-neutral-100));border-radius:var(--radius-md);padding:12px 16px;margin:0 0 14px}
+.tipcard{padding:4px 4px 8px}.tipcard .tip{background:none;margin:0}
+.tip .tiph{display:flex;align-items:center;gap:6px;font:700 calc(var(--fs,1)*12px) var(--font-heading);color:var(--color-accent-2-800);margin-bottom:4px}
+.tip b{display:block;font:700 calc(var(--fs,1)*16px) var(--font-heading)}
+.tip p{margin:4px 0 0;font-size:calc(var(--fs,1)*14px);line-height:1.7;color:var(--color-neutral-800)}
+.tip.fade{animation:tipf .5s}
+@keyframes tipf{from{opacity:0}to{opacity:1}}
+.tipnext{display:flex;align-items:center;gap:2px;margin:0 12px 0 auto;border:0;background:none;color:var(--color-accent-2-800);font:700 calc(var(--fs,1)*13px) var(--font-heading);min-height:36px}
 </style>
 </head>
 <body>
@@ -488,7 +496,8 @@ const IC = {
   'chevron-right': '<path d="m9 18 6-6-6-6"/>',
   'chevron-left': '<path d="m15 18-6-6 6-6"/>',
   'chevron-down': '<path d="m6 9 6 6 6-6"/>',
-  'clock': '<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>'
+  'clock': '<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>',
+  'bulb': '<path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.7V16h8v-1.3A7 7 0 0 0 12 2z"/>'
 };
 function ic(n, s = 22, sw = 2.75) { return `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${IC[n] || ''}</svg>`; }
 
@@ -563,7 +572,7 @@ function pastHomeHtml() {   // ホームの「これまでの英文」（いち�
 function vHome() {
   if (session) return vReview();
   const date = new Date().toLocaleDateString('ja-JP', { month: 'long', day: 'numeric' });
-  $('#app').innerHTML = `<div class="hd"><h1>マイ英語</h1><span class="date">${date}</span></div>${noticeHtml(!S.essays[0])}${todayEssayHtml()}${reviewRowHtml()}${swipeHtml()}${rereadHtml()}${listenHtml()}${pastHomeHtml()}`;
+  $('#app').innerHTML = `<div class="hd"><h1>マイ英語</h1><span class="date">${date}</span></div>${noticeHtml(!S.essays[0])}${todayEssayHtml()}${S.settings.tips === false ? '' : tipHomeHtml()}${reviewRowHtml()}${swipeHtml()}${rereadHtml()}${listenHtml()}${pastHomeHtml()}`;
   hPlayUI();
 }
 function startReview() {
@@ -1098,6 +1107,7 @@ function vSet() {
     <input type="range" min="3" max="20" value="${S.settings.cap}" oninput="S.settings.cap=+this.value;save();$('#capv').textContent=this.value+'語';rangeP(this)" aria-label="1日のおさらい数">
     <div class="srow" style="margin-top:16px">読み上げの速さ<span id="ratev">${S.settings.rate}</span></div>
     <input type="range" min="0.6" max="1.2" step="0.1" value="${S.settings.rate}" oninput="S.settings.rate=+this.value;save();$('#ratev').textContent=this.value;rangeP(this)" aria-label="読み上げの速さ"></div>
+    <label class="chkrow"><input type="checkbox" ${S.settings.tips !== false ? 'checked' : ''} onchange="S.settings.tips=this.checked;save()">ホームに「学習のコツ」を出す</label>
   ${interestsCard()}
   <div class="card"><b style="font:700 calc(var(--fs,1)*17px) var(--font-heading)">表示</b>
     <label>テーマ</label><div class="seg" style="margin-bottom:6px">${Object.entries(THEMES).map(([k, v]) => `<button class="${(S.settings.theme || 'auto') === k ? 'on' : ''}" onclick="setLook('theme','${k}')">${v}</button>`).join('')}</div>
@@ -1154,11 +1164,50 @@ function vWizard() {
 
 /* ---------- 英文づくりの待ち時間・エラー（全画面） ---------- */
 let genStep = 2, genErr = null, genRun = 0;   // genStep: 2=英文をつくっている／3=単語をえらんでいる
+/* ---------- 英語学習のコツ（起動したとき・英文をつくっている間に、ランダムで1つ） ---------- */
+const TIPS = [
+  ['少しずつ、毎日', '1日にたくさんより、毎日10分のほうが身につきます。間をあけてくり返すと、記憶に残りやすくなります。'],
+  ['思い出すことが練習', '答えを見る前に「なんだっけ？」と思い出そうとするだけで、記憶が強くなります。まちがえても大丈夫です。'],
+  ['忘れかけたころが、ちょうどいい', '少し忘れかけたころに見直すと、いちばんよく覚えられます。おさらいの日にちは、そのために決めています。'],
+  ['自分のことは覚えやすい', '自分の日記から作った英文は、知らない人の話よりずっと覚えやすいです。思い出と言葉がつながるからです。'],
+  ['同じ英文を何回も', '新しい英文をたくさん読むより、同じ英文を3〜4回読むほうが、すらすら読めるようになります。'],
+  ['だいたい分かればOK', '知らない単語が少しあっても、意味がだいたい分かれば十分です。前後の文から意味を想像してみましょう。'],
+  ['声に出して読む', '目で読むだけより、声に出して読むほうが覚えやすくなります。小さな声でも効果があります。'],
+  ['まねして言ってみる', '聞こえた英語をすぐまねして言う「シャドーイング」は、発音とリズムの練習になります。'],
+  ['単語は文といっしょに', '単語は1つだけで覚えるより、例文といっしょに覚えるほうが、使える言葉になります。'],
+  ['書いてみると分かる', '自分で英文を書くと、「ここが言えない」と気づけます。気づいたところが、次に覚えることです。'],
+  ['まちがいは宝もの', 'まちがえたところをなおしてもらうと、そこが一番よく覚えられます。どんどんまちがえましょう。'],
+  ['完ぺきでなくていい', '短くてかんたんな英文でも、伝われば大成功です。まずは言ってみることが大事です。'],
+  ['聞き流しは「すきま時間」に', '家事や移動のあいだに聞き流すと、同じ英文に何回も出会えます。'],
+  ['先に意味を知っておく', '英文の意味を知ってから聞くと、聞き取れる音が増えます。読んでから聞くのがおすすめです。'],
+  ['寝る前の見直し', '寝る前に少し見直すと、ねむっているあいだに記憶が整理されやすいと言われています。'],
+  ['小さな目標', '「今日は1本読む」くらいの小さな目標なら、毎日つづけやすくなります。'],
+  ['休んでも大丈夫', '休んだ日があっても大丈夫。また今日から始めれば、それまでの学びは消えません。'],
+  ['「なぜこの形？」と考える', '文法は、「なぜここはこの形なんだろう？」と考えながら読むと、よく分かります。'],
+  ['日本語にしないで読む', '慣れてきたら、日本語に直さず、英語の順番のまま意味をつかむ練習をしてみましょう。'],
+  ['チャンクで覚える', '「in the morning」のような、いつも一緒に使う言葉のかたまりで覚えると、話すときにすぐ出てきます。'],
+  ['自分の言葉に言いかえる', '読んだ英文を、自分の言葉で言いかえてみると、本当に分かったかたしかめられます。'],
+  ['音のつながりに注意', '英語は単語と単語の音がつながって聞こえます（例：check it → チェキッ）。聞き流しで耳を慣らしましょう。'],
+  ['たくさん読む', 'やさしい英文をたくさん読むことは、むずかしい英文を少し読むより、力がつきやすいです。'],
+  ['楽しいことが一番', '好きな話題の英文は、自然と何回も読みたくなります。日記に好きなことを書いてみましょう。'],
+  ['いろいろな声で聞く', 'いろいろな人の声で聞くと、ちがう話し方の英語も聞き取れるようになります。'],
+  ['今日学んだことを1つ使う', '覚えた単語を1つ、日記やひとりごとで使ってみると、自分の言葉になります。'],
+];
+let tipI = Math.floor(Math.random() * TIPS.length), tipTimer = null;
+function tipHtml(i, cls) { const t = TIPS[(i % TIPS.length + TIPS.length) % TIPS.length]; return `<div class="tip ${cls || ''}" id="tip"><div class="tiph">${ic('bulb', 18)}学習のコツ</div><b>${t[0]}</b><p>${t[1]}</p></div>`; }
+function tipHomeHtml() { return `<div class="card tipcard">${tipHtml(tipI)}<button class="tipnext" onclick="nextTip()" aria-label="ほかのコツ">ほかのコツ${ic('chevron-right', 16)}</button></div>`; }
+function nextTip() { tipI = (tipI + 1) % TIPS.length; const el = $('#tip'); if (el) el.outerHTML = tipHtml(tipI); }
+function startTipRotate() {   // 英文をつくっている間：8秒ごとに次のコツ
+  if (tipTimer) return; tipI = (tipI + 1) % TIPS.length;
+  tipTimer = setInterval(() => { if (!gen) { clearInterval(tipTimer); tipTimer = null; return; } tipI = (tipI + 1) % TIPS.length; const el = $('#tip'); if (el) el.outerHTML = tipHtml(tipI, 'fade'); }, 8000);
+}
 function vLoading() {
+  startTipRotate();
   const st = i => genStep > i ? 'done' : genStep === i ? 'act' : 'wait';
   $('#app').innerHTML = `<div class="fullpage"><div class="load3"><i class="a"></i><i class="b"></i><i class="c"></i></div>
     <h2 class="bigtitle">英文を\nつくっています…</h2><p class="sub" style="font-weight:700;font-size:calc(var(--fs,1)*15px)">20〜60秒かかります。画面を開いたままでお待ちください。</p>
     <div class="steps">${[['日記を読みました', 1], ['英文をつくっています', 2], ['単語をえらびます', 3]].map(([t, i]) => `<div class="ls ${st(i)}"><span class="dotp">${st(i) === 'done' ? ic('check', 16, 3.5) : ''}</span>${t}</div>`).join('')}</div>
+    ${tipHtml(tipI)}
     <div class="bottom"><button class="btn ghost" onclick="cancelGen()">やめる</button></div></div>`;
 }
 function cancelGen() { genRun++; gen = null; genErr = null; render(); toast('やめました'); }

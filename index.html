@@ -348,6 +348,14 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 .lisctl{display:flex;align-items:center;justify-content:center;gap:18px;margin:4px 0 16px}
 .lisctl .sbtn{width:var(--tap);height:var(--tap);border:0;background:none;color:var(--color-text);display:flex;align-items:center;justify-content:center;border-radius:50%}
 .lisctl .speed{border:0;border-radius:var(--radius-pill);background:var(--color-neutral-200);color:var(--color-text);font:700 calc(var(--fs,1)*14px) var(--font-en-display);min-height:36px;padding:0 14px}
+.rtop{display:flex;justify-content:space-between;align-items:center;gap:10px;min-height:var(--tap)}
+.rtop .topic{font:700 calc(var(--fs,1)*12px) var(--font-heading);color:var(--color-neutral-700)}
+.pillbtn{display:inline-flex;align-items:center;gap:6px;border:0;border-radius:var(--radius-pill);background:var(--color-accent-2-200);color:var(--color-accent-2-800);font:700 calc(var(--fs,1)*13px) var(--font-heading);min-height:38px;padding:0 14px;flex:none}
+.chipbtn{border:0;cursor:pointer;min-height:32px}
+.erow{display:flex;align-items:center;gap:4px;background:var(--color-neutral-100);border-radius:var(--radius-md);margin-bottom:8px;box-shadow:var(--shadow-sm);padding-right:4px}
+.erow.cur{box-shadow:inset 0 0 0 2px var(--color-accent-300)}
+.erow .emain{flex:1;min-width:0;border:0;background:none;text-align:left;padding:12px 4px 12px 16px;color:inherit}
+.erow .et{display:block;font:calc(var(--fs,1)*19px)/1.3 var(--font-en-display)}
 </style>
 </head>
 <body>
@@ -543,10 +551,15 @@ function reviewRowHtml() {
   return `<div class="card rrow"><div class="circ">${ic('check', 26)}</div><div class="rtxt"><b>今日はおしまい</b><div class="sub">${info}</div></div>
     <button class="btn soft" onclick="S.daily.done=Math.max(0,S.daily.done-5);save();render()" ${dueCards().length ? '' : 'disabled'}>もう少し（+5件）</button></div>`;
 }
+function pastHomeHtml() {   // ホームの「これまでの英文」（いちばん新しい1本は、上の「今日の英文」にあるので、その次から）
+  const L = S.essays.slice(1, 4); if (!L.length) return '';
+  return `<div class="shead">これまでの英文 <small>${S.essays.length}本</small></div><div class="card" style="padding:4px 14px">${L.map(e => `<button class="frow" onclick="openEssayFrom('${e.id}')"><span style="min-width:0"><span style="display:block;font:calc(var(--fs,1)*17px) var(--font-en-display)">${esc(e.title || e.text.slice(0, 24))}</span><span class="sub" style="font-weight:700">${dayGroup(e.createdAt) === '今日' ? '今日' : new Date(e.createdAt).toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric' })}${e.topic ? '・' + esc(e.topic) : ''}</span></span><span class="d">${ic('chevron-right', 20)}</span></button>`).join('')}</div>
+    <button class="btn ghost" style="margin-bottom:14px" onclick="openPast()">すべて見る（${S.essays.length}本）${ic('chevron-right', 18)}</button>`;
+}
 function vHome() {
   if (session) return vReview();
   const date = new Date().toLocaleDateString('ja-JP', { month: 'long', day: 'numeric' });
-  $('#app').innerHTML = `<div class="hd"><h1>マイ英語</h1><span class="date">${date}</span></div>${noticeHtml(!S.essays[0])}${todayEssayHtml()}${reviewRowHtml()}${swipeHtml()}${rereadHtml()}${listenHtml()}`;
+  $('#app').innerHTML = `<div class="hd"><h1>マイ英語</h1><span class="date">${date}</span></div>${noticeHtml(!S.essays[0])}${todayEssayHtml()}${reviewRowHtml()}${swipeHtml()}${rereadHtml()}${listenHtml()}${pastHomeHtml()}`;
   hPlayUI();
 }
 function startReview() {
@@ -735,8 +748,9 @@ function nextHtml() {
 }
 function finishStudy() { stopSpeech(); markRead(curEssay()); S.daily.read = true; save(); toast('おつかれさま！「今日は読んだ」にしました'); go('home'); }
 function readHead(e) {
-  return `<div class="rhead"><div>${e && e.topic ? `<div class="topic">話題：${esc(e.topic)}</div>` : ''}<h1 ${e ? '' : 'style="font-family:var(--font-heading);font-size:calc(var(--fs,1)*28px)"'}>${esc(e ? (e.title || 'Essay') : '英文を読む')}</h1></div>
-    <button class="iconbtn" onclick="rlist=true;render()" aria-label="保存した英文">${ic('clock', 22)}</button></div>`;
+  const n = S.essays.length;
+  return `<div class="rtop">${e && e.topic ? `<span class="topic">話題：${esc(e.topic)}</span>` : '<span></span>'}${n ? `<button class="pillbtn" onclick="openPast()">${ic('clock', 18)}過去の英文 ${n}本</button>` : ''}</div>
+    <div class="rhead"><h1 ${e ? '' : 'style="font-family:var(--font-heading);font-size:calc(var(--fs,1)*28px)"'}>${esc(e ? (e.title || 'Essay') : '英文を読む')}</h1></div>`;
 }
 function playerHtml() {
   return `<div class="spacer"></div><div class="playerbar"><button class="pbtn" id="bplay" onclick="togglePlayText()"></button>
@@ -746,7 +760,7 @@ function playerHtml() {
 function vRead() {
   const t = S.text || '', e = curEssay();
   if (rlist) {
-    $('#app').innerHTML = `<div class="rhead"><h1 style="font-family:var(--font-heading);font-size:calc(var(--fs,1)*28px)">保存した英文</h1><button class="iconbtn" onclick="rlist=false;render()" aria-label="とじる">${ic('x', 22)}</button></div>${essayListHtml()}`;
+    $('#app').innerHTML = `<div class="rhead"><div><h1 style="font-family:var(--font-heading);font-size:calc(var(--fs,1)*28px);line-height:1.25;margin:0">過去の英文</h1><p class="sub" style="font-weight:700;margin:4px 0 0">${S.essays.length}本・新しい順（タップで開きます）</p></div><button class="iconbtn" onclick="rlist=false;render()" aria-label="とじる">${ic('x', 22)}</button></div>${essayListHtml()}`;
     return;
   }
   const isEn = !e || rtab === 'en'; let body;
@@ -843,11 +857,32 @@ function candHtml() {
   return `<div class="rpanel"><p class="sub" style="margin:0 0 6px;font-weight:700">${n ? n + '語を単語帳に入れました' : '気になる単語を、単語帳に入れましょう'}</p>${e.words.map((w, i) => `<div class="item" style="align-items:center"><div style="min-width:0"><div class="wd">${esc(w.word)}</div><div class="mn">${esc(w.meaning)}</div>${w.note ? `<div class="sub">${esc(w.note)}</div>` : ''}</div>
     ${w.added ? `<button class="btn soft" style="width:auto;flex:none;padding:8px 16px" onclick="removeCand(${i})">${ic('check', 18)}入れた</button>` : `<button class="btn" style="width:auto;flex:none;padding:8px 16px" onclick="addCand(${i})">${ic('plus', 18)}入れる</button>`}</div>`).join('')}</div>`;
 }
+let rq = '';   // 過去の英文の検索
+function openPast() { stopSpeech(); sheet = null; tab = 'read'; session = null; rlist = true; rq = ''; render(); window.scrollTo(0, 0); }
+function openEssayFrom(id) { stopSpeech(); tab = 'read'; session = null; openEssay(id); }
+function dayGroup(t) {   // 今日／昨日／今週／○年○月
+  const d = new Date(t), a = new Date(); a.setHours(0, 0, 0, 0); const diff = Math.floor((a - new Date(d.getFullYear(), d.getMonth(), d.getDate())) / 864e5);
+  return diff <= 0 ? '今日' : diff === 1 ? '昨日' : diff < 7 ? '今週' : d.getFullYear() + '年' + (d.getMonth() + 1) + '月';
+}
+function essayRow(e) {
+  const reads = e.rr ? e.rr.n : 0, prac = (S.outputs || []).filter(o => o.essayId === e.id).length;
+  return `<div class="erow ${e.id === S.essayId ? 'cur' : ''}"><button class="emain" onclick="openEssayFrom('${e.id}')">
+      <span class="et">${esc(e.title || e.text.slice(0, 24))}</span>
+      <span class="sub" style="display:block;font-weight:700">${new Date(e.createdAt).toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric' })}${e.diaryName ? '・' + esc(e.diaryName) : ''}${e.topic ? '・話題：' + esc(e.topic) : ''}</span>
+      <span class="chips" style="margin-top:6px">${e.id === S.essayId ? '<span class="chip">表示中</span>' : ''}${reads ? `<span class="chip sage">読んだ ×${reads}</span>` : '<span class="chip gray" style="font-family:var(--font-body)">まだ読んでいない</span>'}${prac ? `<span class="chip gray" style="font-family:var(--font-body)">練習 ×${prac}</span>` : ''}</span></button>
+    <button class="x" onclick="delEssay('${e.id}')" aria-label="消す">${ic('x', 18)}</button></div>`;
+}
+function pastListInner() {
+  const q = rq.trim().toLowerCase();
+  const L = (S.essays || []).filter(e => !q || [e.title, e.topic, e.angle, e.diaryName, e.text].some(x => String(x || '').toLowerCase().includes(q)));
+  if (!L.length) return `<p class="sub center" style="padding:14px 0">${S.essays.length ? '見つかりませんでした' : 'まだありません。「日記」タブで、日記から英文をつくれます。'}</p>`;
+  let out = '', g = '';
+  L.forEach(e => { const k = dayGroup(e.createdAt); if (k !== g) { g = k; out += `<div class="shead" style="margin:16px 4px 6px">${k}</div>`; } out += essayRow(e); });
+  return out;
+}
+function searchPast(v) { rq = v; const el = $('#elist'); if (el) el.innerHTML = pastListInner(); }
 function essayListHtml() {
-  const L = S.essays || [];
-  return `<div class="rpanel"><b style="font:700 calc(var(--fs,1)*17px) var(--font-heading)">保存した英文（${L.length}件）</b>${L.map(e => `<div class="item" style="align-items:center"><div style="min-width:0"><div style="font:calc(var(--fs,1)*19px)/1.3 var(--font-en-display)">${esc(e.title || e.text.slice(0, 20))}</div>
-    <div class="sub">${new Date(e.createdAt).toLocaleDateString('ja-JP')}・${esc(e.diaryName || '')}${e.id === S.essayId ? '・表示中' : ''}</div>${e.topic || e.angle ? `<div class="sub">話題：${esc(e.topic || '—')}${e.angle ? '・切り口：' + esc(e.angle) : ''}</div>` : ''}</div>
-    <div style="display:flex;gap:2px;flex:none;align-items:center"><button class="btn soft" style="width:auto;padding:8px 16px" onclick="openEssay('${e.id}')">開く</button><button class="x" onclick="delEssay('${e.id}')" aria-label="消す">${ic('x', 18)}</button></div></div>`).join('') || '<p class="sub center">まだありません。「日記」タブで、日記から英文をつくれます。</p>'}</div>`;
+  return `${S.essays.length > 3 ? `<div class="search" style="margin-bottom:6px"><span class="si">${ic('search', 20)}</span><input id="rq" value="${esc(rq)}" placeholder="タイトル・話題・本文で探す" oninput="searchPast(this.value)"></div>` : ''}<div id="elist">${pastListInner()}</div>`;
 }
 
 /* ---- 単語タップのシート ---- */
@@ -944,7 +979,7 @@ function vDiary() {
   const shown = S.diaries.filter(d => dfilter === 'all' || (dfilter === 'used') === !!d.used);
   const list = shown.map(d => { const n = S.essays.filter(e => e.diaryId === d.id).length; return `<div class="card dcard ${d.used ? 'used' : ''}"><div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start"><div style="min-width:0"><div class="tt">${esc(d.name)}</div>
       <div class="meta">${new Date(d.importedAt).toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric' })}に取り込み・${d.text.length}文字</div>
-      ${d.used ? `<div style="margin-top:6px"><span class="chip sage">${ic('check', 14)}使用済み${n ? '・英文' + n + '本' : ''}</span></div>` : ''}</div>
+      ${d.used ? `<div style="margin-top:6px">${n ? `<button class="chip sage chipbtn" onclick="openEssayFrom('${(S.essays.find(e => e.diaryId === d.id) || {}).id}')">${ic('check', 14)}使用済み・英文${n}本　開く${ic('chevron-right', 14)}</button>` : `<span class="chip sage">${ic('check', 14)}使用済み</span>`}</div>` : ''}</div>
       <button class="x" onclick="delDiary('${d.id}')" aria-label="消す">${ic('x', 20)}</button></div>
     ${openDiaryId === d.id ? `<div class="pre">${esc(d.text)}</div>` : `<div class="ex2">${esc(d.text)}</div>`}
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="btn ${d.used ? 'soft' : ''}" onclick="makeEssay('${d.id}')" ${gen ? 'disabled' : ''}>${d.used ? 'もう一度英文をつくる' : 'この日記から英文をつくる'}</button>

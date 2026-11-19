@@ -345,6 +345,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 .swhint.ok{left:14px;background:var(--color-accent-2-200);color:var(--color-accent-2-800)}
 .swhint.no{right:14px;background:var(--color-accent-200);color:var(--color-accent-800)}
 .linkbtn:disabled{opacity:.4}
+.iconbtn:disabled{opacity:.3}
 .lisctl{display:flex;align-items:center;justify-content:center;gap:18px;margin:4px 0 16px}
 .lisctl .sbtn{width:var(--tap);height:var(--tap);border:0;background:none;color:var(--color-text);display:flex;align-items:center;justify-content:center;border-radius:50%}
 .lisctl .speed{border:0;border-radius:var(--radius-pill);background:var(--color-neutral-200);color:var(--color-text);font:700 calc(var(--fs,1)*14px) var(--font-en-display);min-height:36px;padding:0 14px}
@@ -367,6 +368,16 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 .tip.fade{animation:tipf .5s}
 @keyframes tipf{from{opacity:0}to{opacity:1}}
 .tipnext{display:flex;align-items:center;gap:2px;margin:0 12px 0 auto;border:0;background:none;color:var(--color-accent-2-800);font:700 calc(var(--fs,1)*13px) var(--font-heading);min-height:36px}
+.pills.wrap{flex-wrap:wrap}
+.cwords{display:flex;flex-wrap:wrap;align-items:center;gap:6px 2px;margin:12px 0 0;font:calc(var(--fs,1)*21px)/1.5 var(--font-en-display)}
+.cw{border:0;background:none;color:inherit;font:inherit;min-height:44px;padding:0 5px;border-radius:10px;border-bottom:3px solid transparent}
+.cw.c0{border-bottom-color:var(--color-accent-300)}.cw.c1{border-bottom-color:var(--color-accent-2-300)}
+.cw.now{background:var(--color-accent-200)}
+.cbar{color:var(--color-accent);font:700 calc(var(--fs,1)*24px) var(--font-heading);padding:0 2px}
+.crow{display:flex;align-items:center;gap:10px;padding:8px 4px;border-bottom:1px solid var(--color-neutral-200)}.crow:last-child{border-bottom:0}
+.crow.now{background:var(--color-accent-200);border-radius:10px}
+.crow .cn{width:26px;height:26px;border-radius:50%;background:var(--color-neutral-200);display:flex;align-items:center;justify-content:center;font:700 calc(var(--fs,1)*13px) var(--font-heading);flex:none}
+.crow .ct{flex:1;min-width:0;font:calc(var(--fs,1)*18px)/1.5 var(--font-en-display)}
 </style>
 </head>
 <body>
@@ -447,11 +458,12 @@ function pickVoice() {
 function setVoice(v) { S.settings.voice = v; save(); pickVoice(); render(); }
 if ('speechSynthesis' in window) { pickVoice(); speechSynthesis.onvoiceschanged = () => { pickVoice(); try { if (tab === 'set') render(); } catch (e) {} }; }
 const PL = { key: null, pos: 0, token: 0, playing: false };   // 読み上げの状態：どの文章を、どこまで読んだか（token は「古い読み上げ」の合図を無視するための番号）
-function stopSpeech() { stopShadow(); lisPause(); PL.token++; PL.playing = false; if ('speechSynthesis' in window) speechSynthesis.cancel(); }
+function stopSpeech() { stopShadow(); lisPause(); cutStop(); PL.token++; PL.playing = false; if ('speechSynthesis' in window) speechSynthesis.cancel(); }
 function speak(text, opts = {}) {
   if (!('speechSynthesis' in window)) return toast('この端末は音声に未対応です');
   if (!opts.fromLis && lis && lis.playing) lisPause();   // ほかの読み上げを始めたら、聞き流し・シャドーイングは止める
   if (!opts.fromSh && sh) stopShadow();
+  if (!opts.fromCut && cut && cut.playing) cutStop();
   PL.token++; PL.playing = false; speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text);
   u.lang = opts.lang || 'en-US'; if (opts.voice) u.voice = opts.voice; else if (!opts.lang || /^en/i.test(opts.lang)) { if (voice) u.voice = voice; } u.rate = opts.rate || S.settings.rate;
@@ -504,7 +516,7 @@ function ic(n, s = 22, sw = 2.75) { return `<svg width="${s}" height="${s}" view
 /* ---------- 画面の切り替え ---------- */
 let tab = 'home', session = null, sheet = null, out = null;
 const TABS = [['home', 'home', 'ホーム'], ['diary', 'notebook', '日記'], ['read', 'book-open', '読む'], ['words', 'list', '単語帳'], ['set', 'sliders', '設定']];
-function go(t) { stopSpeech(); out = null; wiz = null; phil = false; lisView = false; tab = t; session = null; sheet = null; render(); window.scrollTo(0, 0); }
+function go(t) { stopSpeech(); out = null; wiz = null; phil = false; lisView = false; cutView = false; cut = null; tab = t; session = null; sheet = null; render(); window.scrollTo(0, 0); }
 function render() {
   rollDay();
   const full = wiz || gen || genErr;   // 全画面の表示中は、下タブを隠す
@@ -516,6 +528,7 @@ function render() {
   const dot = S.notice && !S.notice.seen ? '<span class="newdot"></span>' : '';   // 控えめなセージ色の点（赤いバッジはつけない）
   $('#nav').innerHTML = TABS.map(([k, i, n]) => `<button class="${tab === k ? 'on' : ''}" onclick="go('${k}')"><span class="pill">${ic(i, 24)}${k === 'read' ? dot : ''}</span>${n}</button>`).join('');
   if (lisView && lis) return vListen();
+  if (cutView && cut) return vCut();
   ({ home: vHome, diary: vDiary, read: vRead, words: vWords, set: vSet })[tab]();
 }
 
@@ -777,7 +790,7 @@ function vRead() {
     return;
   }
   const isEn = !e || rtab === 'en'; let body;
-  if (isEn) body = `<div id="reader"></div>${t ? shHtml() : ''}${e ? `<button class="btn soft" style="margin-bottom:14px" onclick="lisStart('one')">${ic('volume', 18)}この英文を聞き流す</button>` : ''}
+  if (isEn) body = `<div id="reader"></div>${t ? shHtml() : ''}${e ? `<button class="btn soft" style="margin-bottom:14px" onclick="lisStart('one')">${ic('volume', 18)}この英文を聞き流す</button>` : ''}${t ? `<button class="btn soft" style="margin-bottom:14px" onclick="cutStart(0)">${ic('rotate', 18)}文を区切って聞く</button>` : ''}
     <details ${t ? '' : 'open'}><summary>自分で英文を貼り付ける</summary><div style="margin-top:8px"><textarea id="txt" placeholder="Paste English text here...">${esc(t)}</textarea><button class="btn soft" style="margin-top:10px" onclick="loadText()">読み込む</button></div></details>${e && t ? nextHtml() : ''}${t ? playerHtml() : ''}`;
   else if (rtab === 'ja') body = transHtml();
   else if (rtab === 'words') body = redoHtml() + candHtml();
@@ -914,7 +927,7 @@ function sheetBox() {
     body += s.exists ? `<p class="sub" style="margin:10px 0 2px;font-weight:700">${ic('check', 16)} 単語帳に入っています</p><div class="mn" style="font-size:calc(var(--fs,1)*22px)">${esc(s.meaning)}</div>`
       : `<label>意味（日本語）</label><input id="mean" value="${esc(s.meaning)}" placeholder="例：〜を延期する" style="font-weight:700">`;
     if (s.note) body += `<div class="sub" style="margin-top:8px;font-weight:700">${esc(s.note)}</div>`;
-    body += `<div class="sbox">${esc(s.sent)}${s.ja ? `<div class="ja">${esc(s.ja)}</div>` : ''}</div>`;
+    body += `<div class="sbox">${esc(s.sent)}${s.ja ? `<div class="ja">${esc(s.ja)}</div>` : ''}<button class="linkbtn" style="margin-top:6px" onclick="cutFromSheet()">${ic('rotate', 14)} この文を区切って聞く</button></div>`;
     if (s.ex2) body += `<div class="ex" style="margin:4px 4px 0">${esc(s.ex2)} <button class="x" style="min-width:36px;min-height:36px" data-t="${esc(s.ex2)}" onclick="speak(this.dataset.t)" aria-label="聴く">${ic('volume', 18)}</button>${s.ex2ja ? `<div class="sub">${esc(s.ex2ja)}</div>` : ''}</div>`;
   }
   const btns = s.exists ? `<button class="btn ghost" style="margin-top:14px" onclick="sheet=null;render()">とじる</button>`
@@ -1292,6 +1305,108 @@ function shHtml() {
   const t = sh.list[Math.min(sh.i, sh.list.length - 1)];
   return `<div class="rpanel" id="shbox"><div class="sub" style="font-weight:700;display:flex;justify-content:space-between"><span>${sh.i + 1} / ${sh.list.length}</span><span>${sh.phase === 'listen' ? '聞いています…' : 'あなたの番です。声に出して言おう'}</span></div>
     <div style="font:calc(var(--fs,1)*20px)/1.8 var(--font-en-display);margin:10px 0 14px">${esc(t)}</div><button class="btn ghost" onclick="stopShadow()">${ic('stop', 18)}止める</button></div>`;
+}
+
+// ⑦ 区切って聞く：1つの文を、好きなところで区切って、くり返し聞く（長い文も、短いかたまりにすると聞き取りやすい）
+let cut = null, cutView = false;   // cut: { si, list, words, splits:Set, playing, run, timer, q, qi, act }
+const CUT_REP = [[1, '1回'], [3, '3回'], [5, '5回'], [0, 'ずっと']];
+const CUT_GAP = [['s', '短い'], ['m', 'ふつう'], ['l', '長い']];
+function cutOpt() { return Object.assign({ rep: 3, gap: 'm', mode: 'each' }, S.settings.cut || {}); }
+function cutSetOpt(k, v) { S.settings.cut = Object.assign(cutOpt(), { [k]: v }); save(); cutStop(); renderCut(); }
+function cutWords(t) { return String(t).split(/\s+/).filter(Boolean); }
+function cutLoad(si) {
+  const e = curEssay(), list = shSentences(); si = Math.max(0, Math.min(si, list.length - 1));
+  const words = cutWords(list[si] || ''), saved = e && e.cuts && e.cuts[si];
+  cut = Object.assign(cut || {}, { si, list, words, splits: new Set(saved || []), playing: false, run: 0, timer: 0, q: [], qi: 0, act: null });
+}
+function cutStart(si) {
+  if (!('speechSynthesis' in window)) return toast('この端末は音声に未対応です');
+  stopSpeech(); if (!shSentences().length) return; cut = null; cutLoad(si || 0); cutView = true; sheet = null; render(); window.scrollTo(0, 0);
+}
+function cutFromSheet() {   // 単語シートの文から開く
+  const t = sheet && sheet.sent, list = shSentences(); let i = list.findIndex(x => x === t);
+  if (i < 0) i = list.findIndex(x => t && (x.includes(t) || t.includes(x)));
+  cutStart(Math.max(0, i));
+}
+function cutClose() { cutStop(); cut = null; cutView = false; render(); }
+function cutGo(d) { cutStop(); cutLoad(cut.si + d); renderCut(); }
+function cutSave() {
+  const e = curEssay(); if (!e) return;
+  e.cuts = e.cuts || {}; if (cut.splits.size) e.cuts[cut.si] = [...cut.splits].sort((a, b) => a - b); else delete e.cuts[cut.si]; save();
+}
+function cutToggle(i) {   // i 番目の単語のあとで区切る／区切りをとる
+  if (i >= cut.words.length - 1) return;
+  cutStop(); cut.splits.has(i) ? cut.splits.delete(i) : cut.splits.add(i); cutSave(); renderCut();
+}
+function cutClear() { cutStop(); cut.splits.clear(); cutSave(); renderCut(); }
+const CUT_CONJ = /^(and|but|or|so|because|when|while|if|that|which|who|where|after|before|until|since|although|though|than)$/i;   // つなぎの言葉（この前で区切りやすい）
+const CUT_PREP = /^(to|in|on|at|with|for|from|about|into|during|without)$/i;   // 前置詞（かたまりが長いときだけ、この前で区切る）
+function cutAuto() {   // おまかせで区切る：カンマのあと、つなぎの言葉の前、長いときは前置詞の前（短すぎるかたまりは作らない）
+  cutStop(); const W = cut.words, S2 = new Set(); let last = -1;
+  for (let i = 0; i < W.length - 1; i++) {
+    const len = i - last, nextLen = W.length - 1 - i;
+    if ((/[,;:]$/.test(W[i]) && len >= 2) || (nextLen >= 2 && ((CUT_CONJ.test(W[i + 1].replace(/[^a-z]/gi, '')) && len >= 2) || (CUT_PREP.test(W[i + 1].replace(/[^a-z]/gi, '')) && len >= 4))) || len >= 7) { S2.add(i); last = i; }
+  }
+  cut.splits = S2; cutSave(); renderCut(); toast(S2.size ? S2.size + 'か所で区切りました' : '短い文なので、区切りませんでした');
+}
+function cutChunks() {   // [{a, b, text}]（a〜b-1 の単語）
+  const out = []; let a = 0;
+  [...cut.splits].sort((x, y) => x - y).concat([cut.words.length - 1]).forEach(i => { out.push({ a, b: i + 1, text: cut.words.slice(a, i + 1).join(' ') }); a = i + 1; });
+  return out;
+}
+function cutGapMs(t) { const g = cutOpt().gap, base = Math.max(1200, t.length * 75 / (S.settings.rate || 1)); return g === 's' ? 600 : g === 'l' ? base * 1.6 : base; }
+function cutQueue(which) {   // which: かたまりの番号 / 'all'（全体）/ 'seq'（順番に）
+  const C = cutChunks(), o = cutOpt(), n = o.rep || 1, q = [], add = (text, act) => { for (let k = 0; k < n; k++) q.push({ text, act }); };
+  if (which === 'all') add(cut.list[cut.si], 'all');
+  else if (which === 'seq') {
+    if (o.mode === 'build') C.forEach((c, i) => add(cut.words.slice(0, c.b).join(' '), i === C.length - 1 ? 'all' : 'b' + i));   // つみ上げ：1つ目 → 1〜2つ目 → … → 全体
+    else { C.forEach((c, i) => add(c.text, i)); if (C.length > 1) add(cut.list[cut.si], 'all'); }   // 1つずつ → 最後に全体
+  } else add(C[which].text, which);
+  return q;
+}
+function cutPlay(which) {
+  if (cut.playing && cut.which === which) return cutStop();
+  stopSpeech(); const q = cutQueue(which); if (!q.length) return;
+  cut.which = which; cut.q = q; cut.qi = 0; cut.playing = true; cut.loop = !cutOpt().rep; cut.run = Date.now(); cutStep(cut.run);
+}
+function cutStep(run) {
+  if (!cut || cut.run !== run || !cut.playing) return;
+  if (cut.qi >= cut.q.length) { if (cut.loop) cut.qi = 0; else { cutStop(); return; } }
+  const it = cut.q[cut.qi]; cut.act = it.act; updateCut();
+  speak(it.text, { fromCut: true, onend: () => {
+    if (!cut || cut.run !== run || !cut.playing) return;
+    cut.act = null; updateCut();
+    cut.timer = setTimeout(() => { if (!cut || cut.run !== run) return; cut.qi++; cutStep(run); }, cutGapMs(it.text));   // あいだに、まねして言う時間
+  } });
+}
+function cutStop() { if (!cut) return; const was = cut.playing; clearTimeout(cut.timer); cut.playing = false; cut.act = null; cut.which = null; cut.run = 0; if (was && 'speechSynthesis' in window) speechSynthesis.cancel(); updateCut(); }
+function renderCut() { if (cutView) render(); }
+function updateCut() { const el = $('#cutbox'); if (el) el.outerHTML = cutBoxHtml(); }
+function cutBoxHtml() {
+  if (!cut) return '';
+  const C = cutChunks(), on = w => cut.playing && cut.which === w, act = cut.act;
+  const ci = i => C.findIndex(c => i >= c.a && i < c.b);
+  const words = cut.words.map((w, i) => `<button class="cw c${ci(i) % 2} ${typeof act === 'number' && ci(i) === act || act === 'all' || (typeof act === 'string' && act[0] === 'b' && ci(i) <= +act.slice(1)) ? 'now' : ''}" onclick="cutToggle(${i})">${esc(w)}</button>${i < cut.words.length - 1 ? (cut.splits.has(i) ? '<span class="cbar" aria-label="区切り">｜</span>' : '') : ''}`).join('');
+  const rows = C.map((c, i) => `<div class="crow ${act === i ? 'now' : ''}"><span class="cn">${i + 1}</span><span class="ct">${esc(c.text)}</span><button class="iconbtn sm" onclick="cutPlay(${i})" aria-label="${on(i) ? '止める' : 'このかたまりをくり返す'}">${ic(on(i) ? 'stop' : 'rotate', 18)}</button></div>`).join('');
+  return `<div id="cutbox">
+    <div class="rpanel"><div class="sub" style="font-weight:700;display:flex;justify-content:space-between;align-items:center"><button class="iconbtn sm" onclick="cutGo(-1)" ${cut.si ? '' : 'disabled'} aria-label="前の文">${ic('chevron-left', 20)}</button><span>${cut.si + 1} / ${cut.list.length}文</span><button class="iconbtn sm" onclick="cutGo(1)" ${cut.si < cut.list.length - 1 ? '' : 'disabled'} aria-label="次の文">${ic('chevron-right', 20)}</button></div>
+      <div class="cwords">${words}</div>${(() => { const e = curEssay(), s = e && e.sentences && e.sentences[cut.si]; return s && s.ja && s.en === cut.list[cut.si] ? `<div class="sub" style="font-weight:700;margin-top:6px">${esc(s.ja)}</div>` : ''; })()}
+      <p class="sub" style="margin:10px 0 0">区切りたいところの、<b>前の単語</b>をタップすると「｜」が入ります。もう一度タップで消えます。</p>
+      <div class="row" style="margin-top:10px"><button class="btn soft" onclick="cutAuto()">自動で区切る</button><button class="btn ghost" onclick="cutClear()" ${cut.splits.size ? '' : 'disabled'}>区切りを消す</button></div></div>
+    ${C.length > 1 ? `<div class="shead">かたまり <small>${C.length}こ・タップしてくり返し</small></div><div class="card" style="padding:4px 12px">${rows}</div>` : ''}
+    <div class="stack" style="margin-bottom:14px">${C.length > 1 ? `<button class="btn" onclick="cutPlay('seq')">${ic(on('seq') ? 'stop' : 'play', 18)}${on('seq') ? '止める' : '順番に練習'}</button>` : ''}<button class="btn ${C.length > 1 ? 'soft' : ''}" onclick="cutPlay('all')">${ic(on('all') ? 'stop' : 'rotate', 18)}${on('all') ? '止める' : '全体をくり返す'}</button></div>
+  </div>`;
+}
+function vCut() {
+  const o = cutOpt(), pill = (k, v, t) => `<button class="${o[k] === v ? 'on' : ''}" onclick="cutSetOpt('${k}',${typeof v === 'string' ? `'${v}'` : v})">${t}</button>`;
+  $('#app').innerHTML = `<div class="rhead"><h1 style="font-family:var(--font-heading);font-size:calc(var(--fs,1)*28px)">区切って聞く</h1><button class="iconbtn" onclick="cutClose()" aria-label="とじる">${ic('x', 22)}</button></div>
+  <p class="sub" style="font-weight:700;margin:-6px 0 12px">文を短いかたまりに区切って、くり返し聞きます。聞いたあとの「間」で、まねして言ってみましょう。</p>
+  ${cutBoxHtml()}
+  <div class="card"><b style="font:700 calc(var(--fs,1)*16px) var(--font-heading)">くり返し方</b>
+    <div class="sub" style="font-weight:700;margin:10px 0 6px">回数</div><div class="pills wrap">${CUT_REP.map(([v, t]) => pill('rep', v, t)).join('')}</div>
+    <div class="sub" style="font-weight:700;margin:0 0 6px">くり返しの「間」（まねして言う時間）</div><div class="pills wrap">${CUT_GAP.map(([v, t]) => pill('gap', v, t)).join('')}</div>
+    <div class="sub" style="font-weight:700;margin:0 0 6px">「順番に練習」のやり方</div><div class="pills wrap">${pill('mode', 'each', '1つずつ → 全体')}${pill('mode', 'build', 'つみ上げ')}</div>
+    <p class="sub" style="margin:0">つみ上げ：1つ目 → 1〜2つ目 → 1〜3つ目…と、少しずつ長くします。長い文に向いています。速さは「設定」の読み上げの速さです。</p></div>`;
 }
 
 // ② くり返し読み：読んだ英文を、1日後・3日後・7日後に、「もう一度読もう」と知らせる

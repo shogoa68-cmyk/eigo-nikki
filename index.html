@@ -378,6 +378,9 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 .crow.now{background:var(--color-accent-200);border-radius:10px}
 .crow .cn{width:26px;height:26px;border-radius:50%;background:var(--color-neutral-200);display:flex;align-items:center;justify-content:center;font:700 calc(var(--fs,1)*13px) var(--font-heading);flex:none}
 .crow .ct{flex:1;min-width:0;font:calc(var(--fs,1)*18px)/1.5 var(--font-en-display)}
+.dvbar{position:fixed;left:16px;right:16px;bottom:calc(92px + env(safe-area-inset-bottom));z-index:6;max-width:528px;margin:0 auto;display:flex;align-items:center;gap:8px;padding:8px 8px 8px 16px;border-radius:var(--radius-pill);background:var(--color-surface);box-shadow:var(--shadow-md,0 6px 20px rgba(0,0,0,.18))}
+.dvbar .dvn{flex:1;min-width:0;font:700 calc(var(--fs,1)*13px) var(--font-heading);color:var(--color-neutral-700)}.dvbar .dvn b{display:block;font-size:calc(var(--fs,1)*16px);color:var(--color-text)}
+.dvbar .btn{width:auto;flex:none;padding:0 18px;min-height:48px}
 </style>
 </head>
 <body>
@@ -1031,7 +1034,8 @@ function driveHtml() {
   return `<h1 style="font-size:calc(var(--fs,1)*32px)">ドライブから選ぶ</h1><p class="sub" style="font-weight:700;margin:-6px 0 14px">新しい順に30件まで。名前でも探せます。</p>
     <div class="search"><span class="si">${ic('search', 20)}</span><input id="dq" value="${esc(dv.q)}" placeholder="ファイル名で探す" enterkeyhint="search" onchange="searchDrive()" onkeydown="if(event.key==='Enter')searchDrive()"></div>
     <div class="card" style="margin-top:14px;padding:8px 18px">${dv.busy ? '<div class="dots"><i></i><i></i><i></i></div>' : (rows || '<p class="sub center" style="padding:14px 0">見つかりませんでした</p>')}</div>
-    <div class="row" style="margin-top:14px"><button class="btn ghost" onclick="dv=null;render()">やめる</button><button class="btn" onclick="importSelected()" ${n ? '' : 'disabled'}>取り込む（${n}件）</button></div>`;
+    <div style="height:96px"></div>
+    <div class="dvbar"><span class="dvn">${n ? `<b>${n}件</b>えらび中` : 'タップしてえらぶ'}</span><button class="btn ghost" onclick="dv=null;render()">やめる</button><button class="btn" onclick="importSelected()" ${n ? '' : 'disabled'}>取り込む${n ? `（${n}件）` : ''}</button></div>`;   // 取り込むボタンは、いつも画面の下に出しておく
 }
 function addPasted() {
   const t = $('#dtext').value.trim(); if (!t) return toast('本文を入れてください');

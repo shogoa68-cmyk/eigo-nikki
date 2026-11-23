@@ -381,6 +381,26 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 .dvbar{position:fixed;left:16px;right:16px;bottom:calc(92px + env(safe-area-inset-bottom));z-index:6;max-width:528px;margin:0 auto;display:flex;align-items:center;gap:8px;padding:8px 8px 8px 16px;border-radius:var(--radius-pill);background:var(--color-surface);box-shadow:var(--shadow-md,0 6px 20px rgba(0,0,0,.18))}
 .dvbar .dvn{flex:1;min-width:0;font:700 calc(var(--fs,1)*13px) var(--font-heading);color:var(--color-neutral-700)}.dvbar .dvn b{display:block;font-size:calc(var(--fs,1)*16px);color:var(--color-text)}
 .dvbar .btn{width:auto;flex:none;padding:0 18px;min-height:48px}
+.tools{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 12px}
+.tool{flex:none;display:inline-flex;align-items:center;gap:6px;border:0;border-radius:var(--radius-pill);background:var(--color-neutral-200);color:var(--color-text);font:700 calc(var(--fs,1)*14px) var(--font-heading);min-height:var(--tap);padding:0 16px 0 8px}
+.tool .ti{display:inline-flex;align-items:center;justify-content:center;min-width:30px;height:30px;border-radius:50%;background:var(--color-surface);font:700 calc(var(--fs,1)*11px) var(--font-heading);letter-spacing:-.5px}
+.tool.on{background:var(--color-accent-200);color:var(--color-accent-800)}
+.svl{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:18px;padding:0 4px;margin:0 3px 0 1px;border-radius:6px;font:800 calc(var(--fs,1)*11px)/1 var(--font-heading);color:#fff;vertical-align:3px;font-style:normal}
+.r-S{--svc:#c0562b}.r-V{--svc:#2f6fb0}.r-O{--svc:#3d8a4a}.r-C{--svc:#8a54b0}.r-M{--svc:#8a8172}.r-J{--svc:#b08a20}
+:root[data-theme=dark] .r-S{--svc:#e57a4c}:root[data-theme=dark] .r-V{--svc:#6aa6e6}:root[data-theme=dark] .r-O{--svc:#6fbf7c}:root[data-theme=dark] .r-C{--svc:#b88ad9}:root[data-theme=dark] .r-M{--svc:#a89e8c}:root[data-theme=dark] .r-J{--svc:#d9b44a}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]) .r-S{--svc:#e57a4c}:root:not([data-theme=light]) .r-V{--svc:#6aa6e6}:root:not([data-theme=light]) .r-O{--svc:#6fbf7c}:root:not([data-theme=light]) .r-C{--svc:#b88ad9}:root:not([data-theme=light]) .r-M{--svc:#a89e8c}:root:not([data-theme=light]) .r-J{--svc:#d9b44a}}
+.svl{background:var(--svc)}:root[data-theme=dark] .svl{color:#1d1a16}
+.sv{border-bottom:3px solid var(--svc);padding-bottom:1px}
+.sv.r-V{border-bottom-style:double;border-bottom-width:4px}.sv.r-O{border-bottom-style:dashed}.sv.r-C{border-bottom-style:dotted;border-bottom-width:4px}.sv.r-M{border-bottom-width:1px}
+.read.svmode{line-height:2.3}
+.svh{white-space:nowrap}
+.read.svmode .w.saved{border-bottom:0}
+.svleg{display:flex;flex-wrap:wrap;gap:4px 12px;margin:0 0 10px;font:700 calc(var(--fs,1)*12px) var(--font-heading);color:var(--color-neutral-700)}
+.svk{display:inline-flex;align-items:center}
+.svhelp{padding:4px 2px 2px;font-size:calc(var(--fs,1)*14px);line-height:1.9}
+.svlist{margin-top:8px}.svrow{display:flex;gap:10px;align-items:flex-start;padding:10px 0;border-top:1px solid var(--color-neutral-200)}
+.svrow .cn{width:26px;height:26px;border-radius:50%;background:var(--color-neutral-200);display:flex;align-items:center;justify-content:center;font:700 calc(var(--fs,1)*13px) var(--font-heading);flex:none}
+.svpat{font:700 calc(var(--fs,1)*15px) var(--font-heading)}
 </style>
 </head>
 <body>
@@ -793,7 +813,7 @@ function vRead() {
     return;
   }
   const isEn = !e || rtab === 'en'; let body;
-  if (isEn) body = `<div id="reader"></div>${t ? shHtml() : ''}${e ? `<button class="btn soft" style="margin-bottom:14px" onclick="lisStart('one')">${ic('volume', 18)}この英文を聞き流す</button>` : ''}${t ? `<button class="btn soft" style="margin-bottom:14px" onclick="cutStart(0)">${ic('rotate', 18)}文を区切って聞く</button>` : ''}
+  if (isEn) body = `${readToolsHtml(t)}<div id="reader"></div>${t ? svPanelHtml() + shHtml() : ''}
     <details ${t ? '' : 'open'}><summary>自分で英文を貼り付ける</summary><div style="margin-top:8px"><textarea id="txt" placeholder="Paste English text here...">${esc(t)}</textarea><button class="btn soft" style="margin-top:10px" onclick="loadText()">読み込む</button></div></details>${e && t ? nextHtml() : ''}${t ? playerHtml() : ''}`;
   else if (rtab === 'ja') body = transHtml();
   else if (rtab === 'words') body = redoHtml() + candHtml();
@@ -808,11 +828,19 @@ function drawReader(t) {
   words = []; let html = '';
   const re = /([A-Za-z][A-Za-z'’-]*)|([^A-Za-z]+)/g; let m, k = 0;
   const known = new Set(vocab().map(c => c.word)), tw = sheet ? sheet.word : '';
+  const sp = svOn() ? svSpans(t) : [], cuts = [...new Set(sp.flatMap(x => [x.s, x.e]))].sort((a, b) => a - b); let pi = 0, open = null;
+  const put = (at, h, isWord) => {   // at 文字目から始まる部分を書く。SVOCのかたまりの、始まり・終わりでかこむ
+    if (open && at >= open.e) { html += '</span>'; open = null; }
+    while (pi < sp.length && sp[pi].e <= at) pi++;
+    if (!open && isWord && pi < sp.length && at >= sp[pi].s) { open = sp[pi++]; html += `<span class="sv r-${open.r}"><span class="svh"><span class="svl r-${open.r}" aria-label="${SV_ROLES[open.r][1]}">${SV_ROLES[open.r][0]}</span>${h}</span>`; return; }   // 記号と最初の単語は、同じ行に
+    html += h;
+  };
   while ((m = re.exec(t))) {
-    if (m[1]) { const lw = m[1].toLowerCase(); words.push({ s: m.index, e: m.index + m[1].length }); html += `<span class="w ${known.has(lw) ? 'saved' : ''} ${lw === tw ? 'tapped' : ''}" data-k="${k++}" onclick="tapWord(${k - 1})">${esc(m[1])}</span>`; }
-    else html += esc(m[2]).replace(/\n/g, '<br>');
+    if (m[1]) { const lw = m[1].toLowerCase(); words.push({ s: m.index, e: m.index + m[1].length }); put(m.index, `<span class="w ${known.has(lw) ? 'saved' : ''} ${lw === tw ? 'tapped' : ''}" data-k="${k++}" onclick="tapWord(${k - 1})">${esc(m[1])}</span>`, true); }
+    else { let a = m.index; const b = a + m[2].length; cuts.filter(x => x > a && x < b).concat([b]).forEach(x => { put(a, esc(t.slice(a, x)).replace(/\n/g, '<br>'), false); a = x; }); }
   }
-  $('#reader').innerHTML = `<div class="rpanel"><div class="read" id="rd">${html}</div></div><p class="legend">緑の線は、単語帳に入っている単語です。単語をタップすると、意味と例文が出ます。</p>`;
+  if (open) html += '</span>';
+  $('#reader').innerHTML = `<div class="rpanel">${sp.length ? svLegendHtml() : ''}<div class="read ${sp.length ? 'svmode' : ''}" id="rd">${html}</div></div><p class="legend">${sp.length ? '色の線と記号は、S・V・O・C・M のかたまりです。' : '緑の線は、単語帳に入っている単語です。'}単語をタップすると、意味と例文が出ます。</p>`;
 }
 // 再生バー：再生・一時停止（続きから）・止める・最初から・速さ
 function pLabel() {
@@ -1208,6 +1236,7 @@ const TIPS = [
   ['たくさん読む', 'やさしい英文をたくさん読むことは、むずかしい英文を少し読むより、力がつきやすいです。'],
   ['楽しいことが一番', '好きな話題の英文は、自然と何回も読みたくなります。日記に好きなことを書いてみましょう。'],
   ['いろいろな声で聞く', 'いろいろな人の声で聞くと、ちがう話し方の英語も聞き取れるようになります。'],
+  ['まず S と V を見つける', '長い文は、まず「だれが（S）」「どうする（V）」を見つけると、意味がつかみやすくなります。「SVOCで読む」で、色分けして見られます。'],
   ['今日学んだことを1つ使う', '覚えた単語を1つ、日記やひとりごとで使ってみると、自分の言葉になります。'],
 ];
 let tipI = Math.floor(Math.random() * TIPS.length), tipTimer = null;
@@ -1353,6 +1382,10 @@ function cutAuto() {   // おまかせで区切る：カンマのあと、つな
   }
   cut.splits = S2; cutSave(); renderCut(); toast(S2.size ? S2.size + 'か所で区切りました' : '短い文なので、区切りませんでした');
 }
+function cutSvoc() {   // S・V・O・C・M の切れ目で区切る
+  cutStop(); const R = svWordRoles(cut.si, cut.words); if (!R) return;
+  cut.splits = new Set(R.map((r, i) => i < R.length - 1 && r !== R[i + 1] ? i : -1).filter(i => i >= 0)); cutSave(); renderCut(); toast('S・V・O・C・M ごとに区切りました');
+}
 function cutChunks() {   // [{a, b, text}]（a〜b-1 の単語）
   const out = []; let a = 0;
   [...cut.splits].sort((x, y) => x - y).concat([cut.words.length - 1]).forEach(i => { out.push({ a, b: i + 1, text: cut.words.slice(a, i + 1).join(' ') }); a = i + 1; });
@@ -1391,11 +1424,13 @@ function cutBoxHtml() {
   const C = cutChunks(), on = w => cut.playing && cut.which === w, act = cut.act;
   const ci = i => C.findIndex(c => i >= c.a && i < c.b);
   const words = cut.words.map((w, i) => `<button class="cw c${ci(i) % 2} ${typeof act === 'number' && ci(i) === act || act === 'all' || (typeof act === 'string' && act[0] === 'b' && ci(i) <= +act.slice(1)) ? 'now' : ''}" onclick="cutToggle(${i})">${esc(w)}</button>${i < cut.words.length - 1 ? (cut.splits.has(i) ? '<span class="cbar" aria-label="区切り">｜</span>' : '') : ''}`).join('');
-  const rows = C.map((c, i) => `<div class="crow ${act === i ? 'now' : ''}"><span class="cn">${i + 1}</span><span class="ct">${esc(c.text)}</span><button class="iconbtn sm" onclick="cutPlay(${i})" aria-label="${on(i) ? '止める' : 'このかたまりをくり返す'}">${ic(on(i) ? 'stop' : 'rotate', 18)}</button></div>`).join('');
+  const RR = svWordRoles(cut.si, cut.words), roles = c => RR ? [...new Set(RR.slice(c.a, c.b).filter(Boolean))].map(r => `<span class="svl r-${r}">${SV_ROLES[r][0]}</span>`).join('') : '';
+  const rows = C.map((c, i) => `<div class="crow ${act === i ? 'now' : ''}"><span class="cn">${i + 1}</span><span class="ct">${roles(c)}${esc(c.text)}</span><button class="iconbtn sm" onclick="cutPlay(${i})" aria-label="${on(i) ? '止める' : 'このかたまりをくり返す'}">${ic(on(i) ? 'stop' : 'rotate', 18)}</button></div>`).join('');
   return `<div id="cutbox">
     <div class="rpanel"><div class="sub" style="font-weight:700;display:flex;justify-content:space-between;align-items:center"><button class="iconbtn sm" onclick="cutGo(-1)" ${cut.si ? '' : 'disabled'} aria-label="前の文">${ic('chevron-left', 20)}</button><span>${cut.si + 1} / ${cut.list.length}文</span><button class="iconbtn sm" onclick="cutGo(1)" ${cut.si < cut.list.length - 1 ? '' : 'disabled'} aria-label="次の文">${ic('chevron-right', 20)}</button></div>
       <div class="cwords">${words}</div>${(() => { const e = curEssay(), s = e && e.sentences && e.sentences[cut.si]; return s && s.ja && s.en === cut.list[cut.si] ? `<div class="sub" style="font-weight:700;margin-top:6px">${esc(s.ja)}</div>` : ''; })()}
       <p class="sub" style="margin:10px 0 0">区切りたいところの、<b>前の単語</b>をタップすると「｜」が入ります。もう一度タップで消えます。</p>
+      ${svWordRoles(cut.si, cut.words) ? `<button class="btn soft" style="margin-top:10px" onclick="cutSvoc()"><span class="svl r-S" style="margin:0">S</span><span class="svl r-V" style="margin:0 4px 0 2px">V</span>SVOCで区切る</button>` : ''}
       <div class="row" style="margin-top:10px"><button class="btn soft" onclick="cutAuto()">自動で区切る</button><button class="btn ghost" onclick="cutClear()" ${cut.splits.size ? '' : 'disabled'}>区切りを消す</button></div></div>
     ${C.length > 1 ? `<div class="shead">かたまり <small>${C.length}こ・タップしてくり返し</small></div><div class="card" style="padding:4px 12px">${rows}</div>` : ''}
     <div class="stack" style="margin-bottom:14px">${C.length > 1 ? `<button class="btn" onclick="cutPlay('seq')">${ic(on('seq') ? 'stop' : 'play', 18)}${on('seq') ? '止める' : '順番に練習'}</button>` : ''}<button class="btn ${C.length > 1 ? 'soft' : ''}" onclick="cutPlay('all')">${ic(on('all') ? 'stop' : 'rotate', 18)}${on('all') ? '止める' : '全体をくり返す'}</button></div>
@@ -1411,6 +1446,76 @@ function vCut() {
     <div class="sub" style="font-weight:700;margin:0 0 6px">くり返しの「間」（まねして言う時間）</div><div class="pills wrap">${CUT_GAP.map(([v, t]) => pill('gap', v, t)).join('')}</div>
     <div class="sub" style="font-weight:700;margin:0 0 6px">「順番に練習」のやり方</div><div class="pills wrap">${pill('mode', 'each', '1つずつ → 全体')}${pill('mode', 'build', 'つみ上げ')}</div>
     <p class="sub" style="margin:0">つみ上げ：1つ目 → 1〜2つ目 → 1〜3つ目…と、少しずつ長くします。長い文に向いています。速さは「設定」の読み上げの速さです。</p></div>`;
+}
+
+// ⑧ SVOC：文の骨組み（S＝主語・V＝動詞・O＝目的語・C＝補語・M＝修飾語）を色と記号で見せて、文の形を意識しながら読む
+const SV_ROLES = { S: ['S', '主語', 'だれが・なにが'], V: ['V', '動詞', 'どうする・どうだ'], O: ['O', '目的語', 'なにを・だれに'], C: ['C', '補語', 'S や O の説明（＝の関係）'], M: ['M', '修飾語', 'いつ・どこで・どのように など'], J: ['接', 'つなぎ', '文と文をつなぐ言葉（and・but など）'] };
+let svBusy = false, svTmp = null;   // svTmp：保存していない英文（貼り付け）のSVOC { key, items }
+function svData() {   // いまの英文のSVOC（なければ null）
+  const e = curEssay(); if (e) return e.svoc && e.svoc.items ? e.svoc : null;
+  return svTmp && svTmp.key === hash(S.text || '') ? svTmp : null;
+}
+function svOn() { return !!S.settings.svoc; }
+async function svToggle() {
+  S.settings.svoc = !svOn(); save();
+  if (svOn() && !svData()) await svFetch(); else render();
+}
+async function svFetch() {
+  if (svBusy) return; const c = gcfg();
+  if (!c.ak) { S.settings.svoc = false; save(); render(); return toast('SVOCを出すには、設定でClaudeのAPIキーを入れてください'); }
+  const list = shSentences(); if (!list.length) return;
+  svBusy = true; render();
+  const e = curEssay(), key = hash(S.text || '');
+  try {
+    const o = await callRetry(TUTOR, short => 'Analyze the sentence structure of each numbered English sentence for a Japanese learner.\n'
+      + list.slice(0, short ? 12 : 30).map((t, i) => (i + 1) + '. ' + t).join('\n') + '\n'
+      + 'For each sentence, split the WHOLE sentence, in order, into its main elements of the main clause: S (subject), V (verb, including auxiliaries and negation, e.g. "have never felt"), O (object; an indirect object is also O), C (complement), M (modifier: time, place, manner, prepositional phrases, adverbial clauses), J (a conjunction such as and / but / so that joins two clauses). '
+      + 'Copy each part\'s text exactly from the sentence; the parts together must cover the sentence from beginning to end, without the final punctuation. A noun clause or to-infinitive that works as O or C is one part; an adverbial clause is one M part. If two clauses are joined with and / but, label the parts of both clauses.\n'
+      + 'Also give the sentence pattern in Japanese (one of 第1文型（S+V）, 第2文型（S+V+C）, 第3文型（S+V+O）, 第4文型（S+V+O+O）, 第5文型（S+V+O+C）; for two clauses, write both like 第3文型＋第2文型) and ' + (short ? 'a very short' : 'a short') + ' note in simple Japanese for a junior high school student on how to read the sentence (1 sentence).\n'
+      + 'Reply with JSON only (no code fences): {"items":[{"i":1,"pattern":"第3文型（S+V+O）","parts":[{"t":"Last Saturday","r":"M"},{"t":"I","r":"S"},{"t":"played","r":"V"},{"t":"tennis","r":"O"}],"note":"やさしい日本語の説明"}]}', 6000);
+    const items = list.map(() => null);
+    (o.items || []).forEach(it => { const i = (+it.i || 0) - 1; if (i >= 0 && i < items.length && Array.isArray(it.parts)) items[i] = { pattern: String(it.pattern || ''), note: String(it.note || ''), parts: it.parts.filter(p => p && p.t && SV_ROLES[p.r]).map(p => ({ t: String(p.t), r: p.r })) }; });
+    if (!items.some(Boolean)) throw new Error('文の形を読み取れませんでした');
+    const d = { v: 1, items }; if (e) { e.svoc = d; delete e.svocErr; } else svTmp = Object.assign({ key }, d);
+    save();
+  } catch (err) { if (e) e.svocErr = err.message; toast('SVOCを調べられませんでした：' + err.message); }
+  svBusy = false; render();
+}
+// 文章全体の中で、各パーツが何文字目から何文字目か → [{s, e, r}]
+function svSpans(t) {
+  const d = svData(); if (!d) return [];
+  const list = shSentences(), low = t.toLowerCase(), out = []; let cur = 0;
+  list.forEach((sen, i) => {
+    const at = low.indexOf(sen.toLowerCase(), cur); const it = d.items[i]; if (at < 0) return; cur = at + sen.length;
+    if (!it) return; let p = at;
+    it.parts.forEach(x => { const k = low.indexOf(x.t.toLowerCase(), p); if (k < 0 || k >= at + sen.length) return; out.push({ s: k, e: k + x.t.length, r: x.r, si: i }); p = k + x.t.length; });
+  });
+  return out;
+}
+// 単語ごとの役わり（区切って聞く用）：文の単語の番号 → 'S' など
+function svWordRoles(si, words) {
+  const d = svData(), it = d && d.items[si]; if (!it) return null;
+  const R = words.map(() => ''), norm = w => w.toLowerCase().replace(/[^a-z0-9'’-]/g, ''); let k = 0;
+  it.parts.forEach(x => { cutWords(x.t).forEach(w => { const n = norm(w); let j = k; while (j < words.length && norm(words[j]) !== n) j++; if (j < words.length) { R[j] = x.r; k = j + 1; } }); });
+  for (let i = 1; i < R.length; i++) if (!R[i]) R[i] = R[i - 1];   // 句読点だけの単語などは、前と同じ役わり
+  return R.some(Boolean) ? R : null;
+}
+function svLegendHtml() {
+  return `<div class="svleg">${Object.keys(SV_ROLES).map(r => `<span class="svk"><span class="svl r-${r}">${SV_ROLES[r][0]}</span>${SV_ROLES[r][1]}</span>`).join('')}</div>`;
+}
+function svPanelHtml() {   // 英文の下：SVOCの説明と、文ごとの「文の形」
+  if (!svOn()) return '';
+  if (svBusy) return `<div class="rpanel svp"><div class="dots"><i></i><i></i><i></i></div><p class="sub center" style="margin:0">文の形（SVOC）を調べています…（10〜30秒）</p></div>`;
+  const d = svData(), e = curEssay();
+  if (!d) return `<div class="rpanel svp"><b>SVOC</b><p class="sub">${e && e.svocErr ? '前回は、うまく調べられませんでした。' : 'まだ調べていません。'}</p><button class="btn soft" onclick="svFetch()">文の形を調べる</button></div>`;
+  const list = shSentences();
+  return `<div class="rpanel svp"><div style="display:flex;justify-content:space-between;align-items:center"><b style="font:700 calc(var(--fs,1)*16px) var(--font-heading)">文の形（SVOC）</b><button class="linkbtn" onclick="svFetch()">調べ直す</button></div>
+    <details><summary>${ic('chevron-down', 18)}&nbsp;S・V・O・C・M とは？</summary><div class="svhelp">${Object.keys(SV_ROLES).map(r => `<div><span class="svl r-${r}">${SV_ROLES[r][0]}</span><b>${SV_ROLES[r][1]}</b>：${SV_ROLES[r][2]}</div>`).join('')}<p class="sub" style="margin:8px 0 0">まず S と V（だれが・どうする）を見つけると、長い文でも意味がつかみやすくなります。M（修飾語）は、いったん飛ばして読んでもOKです。</p></div></details>
+    <div class="svlist">${d.items.map((it, i) => it ? `<div class="svrow"><span class="cn">${i + 1}</span><div style="min-width:0;flex:1"><div class="svpat">${esc(it.pattern)}</div>${it.note ? `<div class="sub">${esc(it.note)}</div>` : ''}<button class="linkbtn" onclick="cutStart(${i})">${ic('rotate', 14)} この文を区切って聞く</button></div></div>` : '').join('')}</div></div>`;
+}
+function readToolsHtml(t) {   // 英文タブの上：読み方の道具
+  if (!t) return '';
+  return `<div class="tools"><button class="tool ${svOn() ? 'on' : ''}" onclick="svToggle()" aria-pressed="${svOn()}"><span class="ti">SV</span>SVOC${svOn() ? 'を表示中' : 'で読む'}</button><button class="tool" onclick="cutStart(0)"><span class="ti">${ic('rotate', 16)}</span>区切って聞く</button>${curEssay() ? `<button class="tool" onclick="lisStart('one')"><span class="ti">${ic('volume', 16)}</span>聞き流す</button>` : ''}</div>`;
 }
 
 // ② くり返し読み：読んだ英文を、1日後・3日後・7日後に、「もう一度読もう」と知らせる
@@ -1694,20 +1799,28 @@ function loadScript(src) {
     document.head.appendChild(s);
   }));
 }
+// Googleの「通行証」（アクセストークン・1時間有効）は、この端末に保存しておく。開き直しても、1時間以内ならログインし直さなくてよい
+const GTOKKEY = 'eigo-gtok-v1';   // バックアップには入れない
 let gReady = false, gTok = null, gTokExp = 0;
+try { const t = JSON.parse(localStorage.getItem(GTOKKEY) || 'null'); if (t && t.exp > Date.now() + 60000) { gTok = t.tok; gTokExp = t.exp; } } catch (e) {}
+function gTokSave() { try { localStorage.setItem(GTOKKEY, JSON.stringify({ tok: gTok, exp: gTokExp })); } catch (e) {} }
+function gTokClear() { gTok = null; gTokExp = 0; try { localStorage.removeItem(GTOKKEY); } catch (e) {} }
+function gTokValid() { return !!gTok && Date.now() < gTokExp - 60000; }
 // ボタンを押した瞬間にログイン画面を開けるよう、部品は先に読み込んでおく（スマホは押した直後でないと窓が開かないため）
 function preloadGoogle() {
   if (gReady || _sc.loading) return; _sc.loading = true;
   loadScript('https://accounts.google.com/gsi/client').then(() => { gReady = true; if (tab === 'diary') render(); }).catch(() => { _sc.loading = false; });
 }
+// silent=true（自動の確認）のときは、ログイン画面を開かない。通行証がなければ、あとでタップしてもらう
 function getToken(cid, silent) {
   return new Promise((ok, ng) => {
-    if (gTok && Date.now() < gTokExp - 60000) return ok(gTok);
+    if (gTokValid()) return ok(gTok);
+    if (silent) return ng(new Error('needTap'));
     google.accounts.oauth2.initTokenClient({
       client_id: cid, scope: 'https://www.googleapis.com/auth/drive.readonly',
-      callback: r => { if (r.error) return ng(new Error(r.error)); gTok = r.access_token; gTokExp = Date.now() + (r.expires_in || 3600) * 1000; ok(gTok); },
+      callback: r => { if (r.error) return ng(new Error(r.error)); gTok = r.access_token; gTokExp = Date.now() + (r.expires_in || 3600) * 1000; gTokSave(); ok(gTok); },
       error_callback: e => ng(new Error(e.type || 'ログインが中止されました'))
-    }).requestAccessToken(silent ? { prompt: '' } : {});
+    }).requestAccessToken({ prompt: '' });   // 一度許可していれば、確認の画面は出ずに、すぐ閉じる
   });
 }
 let dv = null;   // ドライブの一覧画面の状態 { items, q, sel, busy }
@@ -1725,7 +1838,7 @@ async function driveList() {
     const q = 'trashed=false and ' + kinds + (dv.q ? " and name contains '" + dv.q.replace(/\\/g, '\\\\').replace(/'/g, "\\'") + "'" : '');
     const r = await fetch('https://www.googleapis.com/drive/v3/files?pageSize=30&orderBy=modifiedTime%20desc&fields=files(id,name,mimeType,modifiedTime)&q=' + encodeURIComponent(q),
       { headers: { Authorization: 'Bearer ' + gTok } });
-    if (r.status === 401) { gTok = null; throw new Error('ログインの期限切れです。もう一度「ドライブから選ぶ」を押してください'); }
+    if (r.status === 401) { gTokClear(); throw new Error('ログインの期限切れです。もう一度「ドライブから選ぶ」を押してください'); }
     if (!r.ok) throw new Error(r.status);
     dv.items = (await r.json()).files || [];
   } catch (e) { toast('一覧を取れませんでした：' + e.message); dv.items = []; }
@@ -1846,6 +1959,7 @@ async function driveText(f) {
   const isDoc = f.mimeType === 'application/vnd.google-apps.document';   // Googleドキュメントは文字に変換して取る
   const url = 'https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(f.id) + (isDoc ? '/export?mimeType=text/plain' : '?alt=media');
   const r = await fetch(url, { headers: { Authorization: 'Bearer ' + gTok } });
+  if (r.status === 401) gTokClear();
   if (!r.ok) throw new Error(r.status);
   return (await r.text()).replace(/^﻿/, '').trim();
 }
@@ -1886,11 +2000,11 @@ async function autoDiary(manual) {
     preloadGoogle(); for (let i = 0; i < 50 && !gReady; i++) await sleep(200);
     if (!gReady) return autoStatus('Googleの部品を読み込めませんでした', false);
     try { await Promise.race([getToken(c.cid, !manual), sleep(20000).then(() => { throw new Error('時間切れ'); })]); }
-    catch (e) { return autoStatus('Googleのログインが必要です', true); }   // 自動で開けなかったら、タップしてもらう
+    catch (e) { return autoStatus(manual ? 'Googleにログインできませんでした' : '前回のログインから1時間たったので、確認にはログインが必要です', true); }   // 自動ではログイン画面を開かない。タップしてもらう
     const kinds = "(mimeType='application/vnd.google-apps.document' or mimeType='text/plain' or mimeType='text/markdown')";
     const q = "'" + c.folder + "' in parents and trashed=false and " + kinds;
     const r = await fetch('https://www.googleapis.com/drive/v3/files?pageSize=10&orderBy=modifiedTime%20desc&fields=files(id,name,mimeType,modifiedTime)&q=' + encodeURIComponent(q), { headers: { Authorization: 'Bearer ' + gTok } });
-    if (r.status === 401) { gTok = null; return autoStatus('ログインの期限切れです', true); }
+    if (r.status === 401) { gTokClear(); return autoStatus('ログインの期限切れです', true); }
     if (!r.ok) throw new Error('フォルダを読めません（' + r.status + '）');
     let made = 0, baseline = 0, imported = 0, lastErr = ''; const snaps = loadSnaps();
     for (const f of (await r.json()).files || []) {

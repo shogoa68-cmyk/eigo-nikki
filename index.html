@@ -1799,20 +1799,28 @@ function loadScript(src) {
     document.head.appendChild(s);
   }));
 }
+// Googleの「通行証」（アクセストークン・1時間有効）は、この端末に保存しておく。開き直しても、1時間以内ならログインし直さなくてよい
+const GTOKKEY = 'eigo-gtok-v1';   // バックアップには入れない
 let gReady = false, gTok = null, gTokExp = 0;
+try { const t = JSON.parse(localStorage.getItem(GTOKKEY) || 'null'); if (t && t.exp > Date.now() + 60000) { gTok = t.tok; gTokExp = t.exp; } } catch (e) {}
+function gTokSave() { try { localStorage.setItem(GTOKKEY, JSON.stringify({ tok: gTok, exp: gTokExp })); } catch (e) {} }
+function gTokClear() { gTok = null; gTokExp = 0; try { localStorage.removeItem(GTOKKEY); } catch (e) {} }
+function gTokValid() { return !!gTok && Date.now() < gTokExp - 60000; }
 // ボタンを押した瞬間にログイン画面を開けるよう、部品は先に読み込んでおく（スマホは押した直後でないと窓が開かないため）
 function preloadGoogle() {
   if (gReady || _sc.loading) return; _sc.loading = true;
   loadScript('https://accounts.google.com/gsi/client').then(() => { gReady = true; if (tab === 'diary') render(); }).catch(() => { _sc.loading = false; });
 }
+// silent=true（自動の確認）のときは、ログイン画面を開かない。通行証がなければ、あとでタップしてもらう
 function getToken(cid, silent) {
   return new Promise((ok, ng) => {
-    if (gTok && Date.now() < gTokExp - 60000) return ok(gTok);
+    if (gTokValid()) return ok(gTok);
+    if (silent) return ng(new Error('needTap'));
     google.accounts.oauth2.initTokenClient({
       client_id: cid, scope: 'https://www.googleapis.com/auth/drive.readonly',
-      callback: r => { if (r.error) return ng(new Error(r.error)); gTok = r.access_token; gTokExp = Date.now() + (r.expires_in || 3600) * 1000; ok(gTok); },
+      callback: r => { if (r.error) return ng(new Error(r.error)); gTok = r.access_token; gTokExp = Date.now() + (r.expires_in || 3600) * 1000; gTokSave(); ok(gTok); },
       error_callback: e => ng(new Error(e.type || 'ログインが中止されました'))
-    }).requestAccessToken(silent ? { prompt: '' } : {});
+    }).requestAccessToken({ prompt: '' });   // 一度許可していれば、確認の画面は出ずに、すぐ閉じる
   });
 }
 let dv = null;   // ドライブの一覧画面の状態 { items, q, sel, busy }
@@ -1830,7 +1838,7 @@ async function driveList() {
     const q = 'trashed=false and ' + kinds + (dv.q ? " and name contains '" + dv.q.replace(/\\/g, '\\\\').replace(/'/g, "\\'") + "'" : '');
     const r = await fetch('https://www.googleapis.com/drive/v3/files?pageSize=30&orderBy=modifiedTime%20desc&fields=files(id,name,mimeType,modifiedTime)&q=' + encodeURIComponent(q),
       { headers: { Authorization: 'Bearer ' + gTok } });
-    if (r.status === 401) { gTok = null; throw new Error('ログインの期限切れです。もう一度「ドライブから選ぶ」を押してください'); }
+    if (r.status === 401) { gTokClear(); throw new Error('ログインの期限切れです。もう一度「ドライブから選ぶ」を押してください'); }
     if (!r.ok) throw new Error(r.status);
     dv.items = (await r.json()).files || [];
   } catch (e) { toast('一覧を取れませんでした：' + e.message); dv.items = []; }
@@ -1951,6 +1959,7 @@ async function driveText(f) {
   const isDoc = f.mimeType === 'application/vnd.google-apps.document';   // Googleドキュメントは文字に変換して取る
   const url = 'https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(f.id) + (isDoc ? '/export?mimeType=text/plain' : '?alt=media');
   const r = await fetch(url, { headers: { Authorization: 'Bearer ' + gTok } });
+  if (r.status === 401) gTokClear();
   if (!r.ok) throw new Error(r.status);
   return (await r.text()).replace(/^﻿/, '').trim();
 }
@@ -1991,11 +2000,11 @@ async function autoDiary(manual) {
     preloadGoogle(); for (let i = 0; i < 50 && !gReady; i++) await sleep(200);
     if (!gReady) return autoStatus('Googleの部品を読み込めませんでした', false);
     try { await Promise.race([getToken(c.cid, !manual), sleep(20000).then(() => { throw new Error('時間切れ'); })]); }
-    catch (e) { return autoStatus('Googleのログインが必要です', true); }   // 自動で開けなかったら、タップしてもらう
+    catch (e) { return autoStatus(manual ? 'Googleにログインできませんでした' : '前回のログインから1時間たったので、確認にはログインが必要です', true); }   // 自動ではログイン画面を開かない。タップしてもらう
     const kinds = "(mimeType='application/vnd.google-apps.document' or mimeType='text/plain' or mimeType='text/markdown')";
     const q = "'" + c.folder + "' in parents and trashed=false and " + kinds;
     const r = await fetch('https://www.googleapis.com/drive/v3/files?pageSize=10&orderBy=modifiedTime%20desc&fields=files(id,name,mimeType,modifiedTime)&q=' + encodeURIComponent(q), { headers: { Authorization: 'Bearer ' + gTok } });
-    if (r.status === 401) { gTok = null; return autoStatus('ログインの期限切れです', true); }
+    if (r.status === 401) { gTokClear(); return autoStatus('ログインの期限切れです', true); }
     if (!r.ok) throw new Error('フォルダを読めません（' + r.status + '）');
     let made = 0, baseline = 0, imported = 0, lastErr = ''; const snaps = loadSnaps();
     for (const f of (await r.json()).files || []) {

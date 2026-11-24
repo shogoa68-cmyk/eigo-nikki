@@ -401,6 +401,9 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 .svlist{margin-top:8px}.svrow{display:flex;gap:10px;align-items:flex-start;padding:10px 0;border-top:1px solid var(--color-neutral-200)}
 .svrow .cn{width:26px;height:26px;border-radius:50%;background:var(--color-neutral-200);display:flex;align-items:center;justify-content:center;font:700 calc(var(--fs,1)*13px) var(--font-heading);flex:none}
 .svpat{font:700 calc(var(--fs,1)*15px) var(--font-heading)}
+.ugrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.ubox{background:var(--color-bg);border-radius:var(--radius-md);padding:12px 14px}.ubox b{display:block;font:700 calc(var(--fs,1)*24px) var(--font-heading);margin:2px 0}
+.utab{width:100%;border-collapse:collapse;font-size:calc(var(--fs,1)*13px)}.utab th,.utab td{text-align:left;padding:7px 6px;border-bottom:1px solid var(--color-neutral-200);vertical-align:top}.utab th{font-weight:700;color:var(--color-neutral-700)}.utab td:nth-child(n+2){white-space:nowrap}
 </style>
 </head>
 <body>
@@ -750,6 +753,63 @@ function sentenceAround(i) {
   return t.slice(a, Math.min(b + 1, t.length)).trim();
 }
 // ---- 単語タップ：意味・使い方・例文をすぐ出す ----
+/* ---------- Claude の使用量（トークン）の記録：自分の使い方で、1日・1か月にいくらかかるかを知る ---------- */
+// 料金（1Mトークンあたりのドル）。Anthropic の公開価格（2026年11月）。キャッシュは使っていないが、念のため入れておく
+const PRICE = { 'claude-haiku-5-5': { i: 0.10, o: 0.50 }, 'claude-sonnet-5-5': { i: 2, o: 10 } };
+const USE_KIND = [[/dictionary/i, '単語調べ'], [/Write an English essay/, '英文づくり'], [/essay I am studying/, '単語・文法の解説'], [/sentence structure/, 'SVOC'],
+  [/Create one short writing task/, '練習：お題'], [/<answer>|Task for the learner/, '練習：添削'], [/chatting as a friendly/, '練習：会話'], [/recurring interests/, '関心テーマ']];
+function useKind(system, messages) {
+  const t = system + '\n' + ((messages[messages.length - 1] || {}).content || '');
+  const k = USE_KIND.find(([re]) => re.test(t)); return k ? k[1] : 'その他';
+}
+function useCost(model, u) {   // ドル
+  const p = PRICE[model] || PRICE[Object.keys(PRICE).find(k => String(model).startsWith(k))] || PRICE['claude-haiku-5-5'];
+  return ((u.i || 0) * p.i + (u.o || 0) * p.o + (u.cr || 0) * p.i * 0.1 + (u.cw || 0) * p.i * 1.25) / 1e6;
+}
+function useMonth(t) { const d = new Date(t); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); }
+function recordUsage(model, kind, usage, failed) {
+  if (!usage) return;
+  const U = S.usage = S.usage || { log: [], months: {}, since: Date.now() };
+  const e = { t: Date.now(), m: model, k: kind, i: usage.input_tokens || 0, o: usage.output_tokens || 0, cr: usage.cache_read_input_tokens || 0, cw: usage.cache_creation_input_tokens || 0 };
+  if (failed) e.f = 1;
+  e.usd = useCost(model, e);
+  U.log.push(e); if (U.log.length > 3000) U.log.splice(0, U.log.length - 3000);   // 細かい記録は、新しい3000件まで（合計は months に残る）
+  const M = U.months[useMonth(e.t)] = U.months[useMonth(e.t)] || {}, a = M[kind] = M[kind] || { n: 0, i: 0, o: 0, usd: 0 };
+  a.n++; a.i += e.i + e.cr + e.cw; a.o += e.o; a.usd += e.usd;
+  save();
+}
+function yen(usd) { const r = +(S.settings.fx || 150); const v = usd * r; return v < 1 ? v.toFixed(2) + '円' : v < 100 ? v.toFixed(1) + '円' : Math.round(v).toLocaleString() + '円'; }
+function tok(n) { return n >= 1e6 ? (n / 1e6).toFixed(2) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'k' : String(n); }
+function useSum(list) { return list.reduce((s, e) => ({ n: s.n + 1, i: s.i + e.i + (e.cr || 0) + (e.cw || 0), o: s.o + e.o, usd: s.usd + e.usd }), { n: 0, i: 0, o: 0, usd: 0 }); }
+let useOpen = false;
+function usageHtml() {
+  const U = S.usage || { log: [], months: {} }, now = new Date(), ym = useMonth(now), M = U.months[ym] || {};
+  const today = useSum(U.log.filter(e => new Date(e.t).toDateString() === now.toDateString()));
+  const mon = Object.values(M).reduce((s, a) => ({ n: s.n + a.n, i: s.i + a.i, o: s.o + a.o, usd: s.usd + a.usd }), { n: 0, i: 0, o: 0, usd: 0 });
+  const all = Object.values(U.months).flatMap(m => Object.values(m)).reduce((s, a) => ({ n: s.n + a.n, usd: s.usd + a.usd }), { n: 0, usd: 0 });
+  const day = now.getDate(), days = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const g = M['英文づくり'] || { n: 0, usd: 0 }, ex = M['単語・文法の解説'] || { usd: 0 }, sv = M['SVOC'] || { usd: 0 };
+  const per = g.n ? (g.usd + ex.usd + sv.usd) / g.n : 0;
+  const box = (t, s) => `<div class="ubox"><div class="sub" style="font-weight:700">${t}</div><b>${yen(s.usd)}</b><div class="sub">${s.n}回・入力${tok(s.i)}／出力${tok(s.o)}</div></div>`;
+  const rows = Object.entries(M).sort((a, b) => b[1].usd - a[1].usd).map(([k, a]) => `<tr><td>${esc(k)}</td><td>${a.n}</td><td>${tok(Math.round(a.i / a.n))}／${tok(Math.round(a.o / a.n))}</td><td>${yen(a.usd)}</td></tr>`).join('');
+  return `<div class="card"><div style="display:flex;justify-content:space-between;align-items:center"><b style="font:700 calc(var(--fs,1)*17px) var(--font-heading)">Claudeの使用量</b><button class="linkbtn" onclick="useOpen=!useOpen;render()">${useOpen ? 'とじる' : 'くわしく'}</button></div>
+    <p class="sub" style="margin:6px 0 10px">英文づくりなどで使った「トークン」と、料金のめやすです（この端末で使った分）。</p>
+    <div class="ugrid">${box('今日', today)}${box('今月', mon)}</div>
+    <p class="sub" style="font-weight:700;margin:10px 0 0">今月の見込み：${yen(day ? mon.usd / day * days : 0)}${g.n ? `　／　英文1本あたり（解説・SVOCこみ）：${yen(per)}` : ''}</p>
+    ${useOpen ? `<div style="overflow-x:auto;margin-top:12px"><table class="utab"><thead><tr><th>今月の内訳</th><th>回数</th><th>1回の平均<br>入力／出力</th><th>料金</th></tr></thead><tbody>${rows || '<tr><td colspan="4" class="sub">まだ記録がありません</td></tr>'}</tbody></table></div>
+      <p class="sub" style="margin:10px 0 0">これまで：${all.n}回・${yen(all.usd)}（${U.since ? new Date(U.since).toLocaleDateString('ja-JP') + 'から' : ''}）</p>
+      <label>1ドル＝何円で計算するか</label><input type="number" inputmode="decimal" value="${esc(S.settings.fx || 150)}" onchange="S.settings.fx=+this.value||150;save();render()" style="max-width:140px">
+      <p class="sub" style="margin:8px 0 0">料金は、Anthropicの公開価格から計算した<b>めやす</b>です。正確な金額は、Claude Console（Anthropicの管理画面）の請求ページで確かめてください。トークンの数には、Claudeが「考える」ときに使った分もふくまれます。</p>
+      <div class="row" style="margin-top:12px"><button class="btn soft" onclick="usageCsv()">記録をCSVで保存</button><button class="btn ghost" onclick="usageReset()">記録を消す</button></div>` : ''}</div>`;
+}
+function usageCsv() {
+  const L = (S.usage && S.usage.log) || []; if (!L.length) return toast('まだ記録がありません');
+  const csv = 'date,time,model,kind,input_tokens,output_tokens,cache_read,cache_write,usd,failed\n' + L.map(e => { const d = new Date(e.t); return [d.toLocaleDateString('sv-SE'), d.toTimeString().slice(0, 8), e.m, e.k, e.i, e.o, e.cr || 0, e.cw || 0, e.usd.toFixed(6), e.f ? 1 : 0].join(','); }).join('\n');
+  const name = 'claude-usage-' + todayStr() + '.csv';
+  if (NATIVE) return nativeCall('shareFile', { name, text: csv }).catch(() => {});
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv' })); a.download = name; a.click();
+}
+function usageReset() { if (!confirm('使用量の記録を消しますか？（英文や単語帳は消えません）')) return; S.usage = { log: [], months: {}, since: Date.now() }; save(); render(); }
 async function callClaudeJson(system, messages, maxTokens) {
   const c = gcfg(); if (!c.ak) throw new Error('APIキーがありません');
   const r = await fetch('https://api.anthropic.com/v1/messages', {
@@ -759,10 +819,13 @@ async function callClaudeJson(system, messages, maxTokens) {
   });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(r.status === 401 ? 'APIキーが正しくない、または期限切れです' : r.status === 429 ? 'しばらく待ってもう一度（使用量の上限）' : (j.error && j.error.message) || r.status);
+  const raw = (j.content || []).map(b => b.text || '').join(''); let o = null;
+  try { o = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1)); } catch (e) {}
+  const bad = j.stop_reason === 'max_tokens' || !o;
+  try { recordUsage(j.model || c.model || DEFAULT_MODEL, useKind(system, messages), j.usage, bad); } catch (e) {}   // 失敗した返事も、トークンは使っているので記録する
   if (j.stop_reason === 'max_tokens') { const er = new Error('返事が長くなりすぎて途中で切れました'); er.retry = true; throw er; }
-  const raw = (j.content || []).map(b => b.text || '').join('');
-  try { return JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1)); }
-  catch (e) { const er = new Error('返事の形式を読み取れませんでした'); er.retry = true; throw er; }
+  if (!o) { const er = new Error('返事の形式を読み取れませんでした'); er.retry = true; throw er; }
+  return o;
 }
 function jaFor(sent) {   // 英文を1文ずつ訳したデータから、その文の日本語訳を探す
   const e = curEssay(); if (!e || !e.sentences) return ''; const t = sent.trim();
@@ -1250,6 +1313,7 @@ function vSet() {
     <label>読み上げの声</label><select onchange="setVoice(this.value)"><option value="">おまかせ（いちばん自然な声）</option>${englishVoices().map(v => `<option value="${esc(v.voiceURI)}" ${S.settings.voice === v.voiceURI ? 'selected' : ''}>${esc(v.name)}（${esc(v.lang)}）</option>`).join('')}</select>
     <button class="btn soft" style="margin-top:10px" onclick="speak('Hello! This is how I sound. Nice to meet you.')">${ic('volume', 20)}聞いてみる</button>
     <p class="sub" style="margin:8px 0 0">いまの声：${voice ? esc(voice.name) : '見つかりません'}。iPhoneは「設定→アクセシビリティ→読み上げコンテンツ→声」で、「拡張」や「プレミアム」の声をダウンロードすると、ぐっと自然になります。</p></div>
+  ${usageHtml()}
   <div class="card"><b style="font:700 calc(var(--fs,1)*17px) var(--font-heading)">学習の考え方</b><p class="sub" style="margin:6px 0 12px">このアプリの工夫が、どんな研究にもとづいているかを、読めます。</p><button class="btn soft" onclick="phil=true;render();window.scrollTo(0,0)">読む</button></div>
   <div class="card"><b style="font:700 calc(var(--fs,1)*17px) var(--font-heading)">バックアップ</b><p class="sub" style="margin:6px 0 12px">データ（日記の本文も含む）はこの端末の中だけにあります。機種変更やブラウザのデータ削除の前に保存しておくと安心です。</p>
     <div class="row"><button class="btn soft" onclick="exportData()">書き出す</button><button class="btn soft" onclick="$('#imp').click()">読み込む</button></div>

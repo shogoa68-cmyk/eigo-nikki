@@ -406,6 +406,8 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 .utab{width:100%;border-collapse:collapse;font-size:calc(var(--fs,1)*13px)}.utab th,.utab td{text-align:left;padding:7px 6px;border-bottom:1px solid var(--color-neutral-200);vertical-align:top}.utab th{font-weight:700;color:var(--color-neutral-700)}.utab td:nth-child(n+2){white-space:nowrap}
 .citem{border-bottom:1px solid var(--color-neutral-300);border-radius:10px;transition:background .2s}.citem:last-child{border-bottom:0}
 .citem.now{background:var(--color-accent-200)}
+.gcard.plitem{transition:background .2s}.gcard.now{background:var(--color-accent-200)}
+.gexl{display:flex;gap:8px;align-items:flex-start;justify-content:space-between}.gexl>div{flex:1;min-width:0}.gexl .iconbtn{flex:none;margin-top:2px}
 </style>
 </head>
 <body>
@@ -1059,36 +1061,44 @@ function transHtml() {
 function grammarHtml() {
   const e = curEssay(); if (!e) return '';
   if (!(e.grammar || []).length) return e.explained ? `<div class="rpanel"><p class="sub" style="margin:0">この英文には、文法のポイントがありません。</p></div>` : '';
-  return e.grammar.map((g, i) => `<div class="gcard c${i % 4 + 1}"><div class="gh">${numBadge(i)}<span>${esc(g.point)}</span></div>
-    ${g.form ? `<div class="form">形：${esc(g.form)}</div>` : ''}<div class="gex">${hlText(g.example || '', [{ m: g.mark, i }])}</div><div class="gexp">${esc(g.explain)}</div></div>`).join('');
+  const sp = (t, ja) => `data-t="${esc(t)}" onclick="${ja ? 'speakJa' : 'speak'}(this.dataset.t)"`;
+  return `<button class="btn soft" id="cpall" style="margin-bottom:12px" onclick="gramPlayAll()">${cpOn ? `${ic('stop', 18)}止める` : `${ic('volume', 18)}${cpLabel()}`}</button>`
+    + e.grammar.map((g, i) => `<div class="gcard plitem c${i % 4 + 1}"><div class="gh">${numBadge(i)}<span>${esc(g.point)}</span></div>
+    ${g.form ? `<div class="form">形：${esc(g.form)}</div>` : ''}${g.example ? `<div class="gexl"><div class="gex">${hlText(g.example, [{ m: g.mark, i }])}</div><button class="iconbtn sm" ${sp(g.example)} aria-label="例文を聴く">${ic('volume', 18)}</button></div>` : ''}
+    <div class="gexl"><div class="gexp">${esc(g.explain)}</div><button class="iconbtn sm" ${sp(gramSay(g), true)} aria-label="説明を聴く">${ic('volume', 18)}</button></div></div>`).join('');
 }
 // 読む画面の「単語」タブ：単語と例文を、1つずつ・まとめて読み上げる
 var cpOn = false, cpRun = 0;   // まとめて聞いている途中か
-function candPlayAll() {
+function speakJa(t) { speak(t, { lang: 'ja-JP', voice: jaVoiceObj(), rate: 1.05 }); }   // 日本語の説明を、日本語の声で
+const cpLabel = () => rtab === 'gram' ? 'まとめて聞く（例文 → 説明）' : 'まとめて聞く（単語 → 例文）';
+function playAllList(list) {   // list: [[文, 何番目のカードか, 'en' | 'ja'], ...] を順番に読む
   if (cpOn) { stopSpeech(); return; }
-  const e = curEssay(); if (!e || !e.words.length) return;
-  const list = e.words.flatMap((w, i) => [[w.word, i], ...(w.example ? [[w.example, i]] : [])]);
+  if (!list.length) return;
   stopSpeech(); cpOn = true; const run = ++cpRun; let k = 0; candMark(-1);
   const next = () => {
     if (!cpOn || run !== cpRun) return;
     if (k >= list.length) { cpOn = false; candMark(-1); return; }
-    const [t, i] = list[k++]; candMark(i); let tok;
-    speak(t, { fromCp: true, onend: () => { if (cpOn && run === cpRun && tok === PL.token) setTimeout(() => { if (tok === PL.token) next(); }, 600); } });   // 単語と例文の間に、少し間をあける
+    const [t, i, lang] = list[k++]; candMark(i); let tok;
+    const ja = lang === 'ja', o = ja ? { lang: 'ja-JP', voice: jaVoiceObj(), rate: 1.05 } : {};
+    speak(t, Object.assign(o, { fromCp: true, onend: () => { if (cpOn && run === cpRun && tok === PL.token) setTimeout(() => { if (tok === PL.token) next(); }, 600); } }));   // 文と文の間に、少し間をあける
     tok = PL.token;
   };
   next();
 }
-function candMark(i) {   // いま読んでいる単語に色をつける・ボタンの表示
-  document.querySelectorAll('.citem').forEach((el, k) => el.classList.toggle('now', k === i));
-  const b = $('#cpall'); if (b) b.innerHTML = cpOn ? `${ic('stop', 18)}止める` : `${ic('volume', 18)}まとめて聞く（単語 → 例文）`;
+function candPlayAll() { const e = curEssay(); if (e) playAllList(e.words.flatMap((w, i) => [[w.word, i, 'en'], ...(w.example ? [[w.example, i, 'en']] : [])])); }
+function gramPlayAll() { const e = curEssay(); if (e) playAllList((e.grammar || []).flatMap((g, i) => [...(g.example ? [[g.example, i, 'en']] : []), [gramSay(g), i, 'ja']])); }
+const gramSay = g => g.point + '。' + (g.explain || '');
+function candMark(i) {   // いま読んでいるカードに色をつける・ボタンの表示
+  document.querySelectorAll('.plitem').forEach((el, k) => el.classList.toggle('now', k === i));
+  const b = $('#cpall'); if (b) b.innerHTML = cpOn ? `${ic('stop', 18)}止める` : `${ic('volume', 18)}${cpLabel()}`;
 }
 function candHtml() {
   const e = curEssay(); if (!e) return '';
   if (!e.words.length) return e.explained ? `<div class="rpanel"><p class="sub" style="margin:0">この英文から選んだ単語はありません（すでに単語帳にある単語は、候補に出しません）。</p></div>` : '';
   const n = e.words.filter(w => w.added).length, sp = t => `data-t="${esc(t)}" onclick="speak(this.dataset.t)"`;
   return `<div class="rpanel"><p class="sub" style="margin:0 0 10px;font-weight:700">${n ? n + '語を単語帳に入れました' : '気になる単語を、単語帳に入れましょう'}</p>
-    <button class="btn soft" id="cpall" style="margin-bottom:6px" onclick="candPlayAll()">${cpOn ? `${ic('stop', 18)}止める` : `${ic('volume', 18)}まとめて聞く（単語 → 例文）`}</button>
-    ${e.words.map((w, i) => { const ja = w.example ? jaFor(w.example) : ''; return `<div class="citem"><div class="item" style="align-items:center;border:0;padding-bottom:4px"><div style="min-width:0;display:flex;gap:6px;align-items:flex-start"><button class="iconbtn sm" ${sp(w.word)} aria-label="単語を聴く" style="flex:none;margin-top:2px">${ic('volume', 18)}</button><div style="min-width:0"><div class="wd">${esc(w.word)}</div><div class="mn">${esc(w.meaning)}</div>${w.note ? `<div class="sub">${esc(w.note)}</div>` : ''}</div></div>
+    <button class="btn soft" id="cpall" style="margin-bottom:6px" onclick="candPlayAll()">${cpOn ? `${ic('stop', 18)}止める` : `${ic('volume', 18)}${cpLabel()}`}</button>
+    ${e.words.map((w, i) => { const ja = w.example ? jaFor(w.example) : ''; return `<div class="citem plitem"><div class="item" style="align-items:center;border:0;padding-bottom:4px"><div style="min-width:0;display:flex;gap:6px;align-items:flex-start"><button class="iconbtn sm" ${sp(w.word)} aria-label="単語を聴く" style="flex:none;margin-top:2px">${ic('volume', 18)}</button><div style="min-width:0"><div class="wd">${esc(w.word)}</div><div class="mn">${esc(w.meaning)}</div>${w.note ? `<div class="sub">${esc(w.note)}</div>` : ''}</div></div>
     ${w.added ? `<button class="btn soft" style="width:auto;flex:none;padding:8px 16px" onclick="removeCand(${i})">${ic('check', 18)}入れた</button>` : `<button class="btn" style="width:auto;flex:none;padding:8px 16px" onclick="addCand(${i})">${ic('plus', 18)}入れる</button>`}</div>
     ${w.example ? `<div class="exbox sm" style="margin:0 0 12px"><div class="exl"><span>${esc(w.example)}</span><button class="iconbtn sm" ${sp(w.example)} aria-label="例文を聴く">${ic('volume', 16)}</button></div>${ja ? `<div class="ja">${esc(ja)}</div>` : ''}</div>` : ''}</div>`; }).join('')}</div>`;
 }

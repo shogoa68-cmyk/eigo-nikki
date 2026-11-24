@@ -61,7 +61,7 @@
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--color-bg);color:var(--color-text);font-family:var(--font-body);font-size:calc(var(--fs,1)*16px);line-height:1.6}
-main{max-width:560px;margin:0 auto;padding:20px 20px calc(112px + env(safe-area-inset-bottom))}
+main{max-width:560px;margin:0 auto;padding:calc(20px + env(safe-area-inset-top)) 20px calc(112px + env(safe-area-inset-bottom))}
 h1{font:500 calc(var(--fs,1)*28px)/1.3 var(--font-heading);margin:6px 0 16px;letter-spacing:.02em}
 h2{font:500 calc(var(--fs,1)*22px)/1.35 var(--font-heading);margin:0}
 button{font-family:inherit;color:inherit;cursor:pointer}
@@ -401,6 +401,9 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 .svlist{margin-top:8px}.svrow{display:flex;gap:10px;align-items:flex-start;padding:10px 0;border-top:1px solid var(--color-neutral-200)}
 .svrow .cn{width:26px;height:26px;border-radius:50%;background:var(--color-neutral-200);display:flex;align-items:center;justify-content:center;font:700 calc(var(--fs,1)*13px) var(--font-heading);flex:none}
 .svpat{font:700 calc(var(--fs,1)*15px) var(--font-heading)}
+.ugrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.ubox{background:var(--color-bg);border-radius:var(--radius-md);padding:12px 14px}.ubox b{display:block;font:700 calc(var(--fs,1)*24px) var(--font-heading);margin:2px 0}
+.utab{width:100%;border-collapse:collapse;font-size:calc(var(--fs,1)*13px)}.utab th,.utab td{text-align:left;padding:7px 6px;border-bottom:1px solid var(--color-neutral-200);vertical-align:top}.utab th{font-weight:700;color:var(--color-neutral-700)}.utab td:nth-child(n+2){white-space:nowrap}
 </style>
 </head>
 <body>
@@ -464,6 +467,95 @@ function rollDay() { if (S.daily.date !== todayStr()) { S.daily = { date: todayS
 const $ = s => document.querySelector(s);
 const esc = s => String(s).replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
 function toast(msg) { const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), 1800); }
+/* ---------- iOSアプリのときだけ：iPhone の部品（native/plugins/my-eigo-native）を使う ----------
+   Webのときは何もしない。iOSアプリでは、読み上げを iPhone の声にかえ（画面を消しても続く）、Googleログインを iPhone 用にする */
+const NATIVE = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+function nativeCall(m, o) { return window.Capacitor.nativePromise('MyEigoNative', m, o || {}); }
+const NS = { run: -2, mode: '', utts: [], base: 0 };   // いま iPhone に送っている読み上げ（run：番号、mode：''＝ふつう／'lis'＝聞き流し）
+if (NATIVE) {
+  let V = [];
+  window.SpeechSynthesisUtterance = function (t) { this.text = String(t); this.lang = 'en-US'; this.rate = 1; this.voice = null; this.onboundary = null; this.onend = null; };
+  const SS = {
+    onvoiceschanged: null, speaking: false, pending: false, paused: false,
+    getVoices: () => V,
+    speak(u) {   // このアプリでは、読み上げの前に必ず cancel するので、1文ずつ送る
+      NS.mode = ''; NS.utts = [u]; NS.run = -1;
+      nativeCall('speak', { items: [{ text: u.text, lang: u.lang, rate: u.rate, voice: u.voice ? u.voice.voiceURI : '' }] }).then(r => { if (NS.utts[0] === u && NS.run === -1) NS.run = r.run; }).catch(() => {});
+    },
+    cancel() { NS.mode = ''; NS.utts = []; NS.run = -2; nativeCall('stop').catch(() => {}); }
+  };
+  Object.defineProperty(window, 'speechSynthesis', { configurable: true, value: SS });
+  nativeCall('getVoices').then(r => {   // おもしろ声（Bubbles など）は除く
+    V = (r.voices || []).filter(v => !/speech\.synthesis\.voice|eloquence/i.test(v.id)).map(v => ({ name: v.name + (v.quality >= 2 ? (v.quality >= 3 ? '（プレミアム）' : '（拡張）') : ''), lang: String(v.lang).replace('_', '-'), voiceURI: v.id, localService: true, default: false }));
+    if (SS.onvoiceschanged) SS.onvoiceschanged();
+  }).catch(() => {});
+  window.Capacitor.addListener('MyEigoNative', 'speech', ev => {
+    if (NS.run === -1) NS.run = ev.run;   // speak の返事より先に知らせが来たとき
+    if (ev.run !== NS.run) return;
+    if (NS.mode === 'lis') return lisNativeEvent(ev);
+    const u = NS.utts[ev.index]; if (!u) return;
+    if (ev.type === 'boundary' && u.onboundary) u.onboundary({ name: 'word', charIndex: ev.charIndex, charLength: ev.charLength });
+    if (ev.type === 'end') { NS.utts[ev.index] = null; if (u.onend) u.onend(); }
+  });
+}
+// 聞き流し（iOSアプリ）：のこりを全部まとめて iPhone に渡す → 画面を消しても、最後まで流れる
+function lisNative() {
+  const L = lis.items.slice(lis.i).map((it, k, arr) => {
+    const ja = it.lang === 'ja', nx = arr[k + 1], v = ja ? jaVoiceObj() : voice;
+    return { text: it.text, lang: ja ? 'ja-JP' : 'en-US', rate: ja ? 1.05 : S.settings.rate, voice: v ? v.voiceURI : '', post: !nx ? 0 : (nx.si !== it.si || nx.ei !== it.ei ? 900 : 350) };
+  });
+  NS.mode = 'lis'; NS.utts = []; NS.base = lis.i; NS.run = -1; updateLis();
+  nativeCall('speak', { items: L }).then(r => { if (NS.mode === 'lis' && NS.run === -1) NS.run = r.run; }).catch(() => {});
+}
+function lisNativeEvent(ev) {
+  if (!lis || !lis.playing) return;
+  if (ev.type === 'start') { lis.i = NS.base + ev.index; updateLis(); }
+  if (ev.type === 'done') { lis.i = lis.items.length; lis.playing = false; NS.mode = ''; updateLis(); toast('聞き流し、おわりました'); }
+}
+// Googleログイン（iOSアプリ）：一度ログインしたら、あとは自動で通行証を更新する（ログイン画面は出ない）
+const GRTKEY = 'eigo-grt-v1';   // 更新用の合い言葉（リフレッシュトークン）。バックアップには入れない
+function b64url(bytes) { let s = ''; bytes.forEach(b => { s += String.fromCharCode(b); }); return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
+function randStr(n) { const a = new Uint8Array(n); crypto.getRandomValues(a); return b64url(a); }
+function sha256(str) {   // 小さな SHA-256（ログインの安全のための合図づくりに使う）
+  const K = [0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2];
+  const m = new TextEncoder().encode(str), l = m.length, n = ((l + 9 + 63) >> 6) << 6, b = new Uint8Array(n); b.set(m); b[l] = 0x80;
+  const dv = new DataView(b.buffer); dv.setUint32(n - 4, l * 8); dv.setUint32(n - 8, Math.floor(l / 0x20000000));
+  let h = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19]; const w = new Array(64), r = (x, y) => (x >>> y) | (x << (32 - y));
+  for (let o = 0; o < n; o += 64) {
+    for (let i = 0; i < 16; i++) w[i] = dv.getUint32(o + i * 4);
+    for (let i = 16; i < 64; i++) { const s0 = r(w[i - 15], 7) ^ r(w[i - 15], 18) ^ (w[i - 15] >>> 3), s1 = r(w[i - 2], 17) ^ r(w[i - 2], 19) ^ (w[i - 2] >>> 10); w[i] = (w[i - 16] + s0 + w[i - 7] + s1) | 0; }
+    let [a, bb, c, d, e, f, g, hh] = h;
+    for (let i = 0; i < 64; i++) { const t1 = (hh + (r(e, 6) ^ r(e, 11) ^ r(e, 25)) + ((e & f) ^ (~e & g)) + K[i] + w[i]) | 0, t2 = ((r(a, 2) ^ r(a, 13) ^ r(a, 22)) + ((a & bb) ^ (a & c) ^ (bb & c))) | 0; hh = g; g = f; f = e; e = (d + t1) | 0; d = c; c = bb; bb = a; a = (t1 + t2) | 0; }
+    h = [h[0] + a, h[1] + bb, h[2] + c, h[3] + d, h[4] + e, h[5] + f, h[6] + g, h[7] + hh].map(x => x | 0);
+  }
+  const out = new Uint8Array(32); h.forEach((x, i) => new DataView(out.buffer).setUint32(i * 4, x >>> 0)); return out;
+}
+const form = o => Object.entries(o).map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v)).join('&');
+async function nativeTokenPost(cid, extra) {
+  const r = await nativeCall('httpPost', { url: 'https://oauth2.googleapis.com/token', body: form(Object.assign({ client_id: cid }, extra)) });
+  let j = {}; try { j = JSON.parse(r.data || '{}'); } catch (e) {}
+  if (r.status !== 200 || !j.access_token) { const er = new Error(j.error_description || j.error || ('ログインできませんでした（' + r.status + '）')); er.code = j.error; throw er; }
+  gTok = j.access_token; gTokExp = Date.now() + (j.expires_in || 3600) * 1000; gTokSave();
+  if (j.refresh_token) try { localStorage.setItem(GRTKEY, j.refresh_token); } catch (e) {}
+  return gTok;
+}
+async function nativeToken(cid, silent) {
+  if (gTokValid()) return gTok;
+  const rt = localStorage.getItem(GRTKEY);
+  if (rt) {   // 合い言葉があれば、ログイン画面なしで通行証を更新
+    try { return await nativeTokenPost(cid, { grant_type: 'refresh_token', refresh_token: rt }); }
+    catch (e) { if (e.code === 'invalid_grant') localStorage.removeItem(GRTKEY); else if (silent) throw e; }
+  }
+  if (silent) throw new Error('needTap');
+  const id = cid.replace(/\.apps\.googleusercontent\.com$/, ''), scheme = 'com.googleusercontent.apps.' + id, redirect = scheme + ':/oauth2redirect';
+  const verifier = randStr(48), state = randStr(16);
+  const url = 'https://accounts.google.com/o/oauth2/v2/auth?' + form({ client_id: cid, redirect_uri: redirect, response_type: 'code', scope: 'https://www.googleapis.com/auth/drive.readonly', code_challenge: b64url(sha256(verifier)), code_challenge_method: 'S256', state });
+  const back = new URL((await nativeCall('authenticate', { url, scheme })).url.replace(/^[^:]+:\/*/, 'https://x/'));
+  if (back.searchParams.get('error')) throw new Error(back.searchParams.get('error'));
+  if (back.searchParams.get('state') !== state) throw new Error('ログインの確認に失敗しました');
+  return nativeTokenPost(cid, { grant_type: 'authorization_code', code: back.searchParams.get('code'), code_verifier: verifier, redirect_uri: redirect });
+}
+function nativeLogout() { try { localStorage.removeItem(GRTKEY); } catch (e) {} gTokClear(); toast('Googleのログインを解除しました'); render(); }
 let voice = null;
 // 声：端末にある英語の声のうち、いちばん自然そうなもの（高品質・拡張・ネイティブ）を自動で選ぶ。設定で、自分で選ぶこともできる
 function voiceScore(v) {
@@ -661,6 +753,63 @@ function sentenceAround(i) {
   return t.slice(a, Math.min(b + 1, t.length)).trim();
 }
 // ---- 単語タップ：意味・使い方・例文をすぐ出す ----
+/* ---------- Claude の使用量（トークン）の記録：自分の使い方で、1日・1か月にいくらかかるかを知る ---------- */
+// 料金（1Mトークンあたりのドル）。Anthropic の公開価格（2026年11月）。キャッシュは使っていないが、念のため入れておく
+const PRICE = { 'claude-haiku-5-5': { i: 0.10, o: 0.50 }, 'claude-sonnet-5-5': { i: 2, o: 10 } };
+const USE_KIND = [[/dictionary/i, '単語調べ'], [/Write an English essay/, '英文づくり'], [/essay I am studying/, '単語・文法の解説'], [/sentence structure/, 'SVOC'],
+  [/Create one short writing task/, '練習：お題'], [/<answer>|Task for the learner/, '練習：添削'], [/chatting as a friendly/, '練習：会話'], [/recurring interests/, '関心テーマ']];
+function useKind(system, messages) {
+  const t = system + '\n' + ((messages[messages.length - 1] || {}).content || '');
+  const k = USE_KIND.find(([re]) => re.test(t)); return k ? k[1] : 'その他';
+}
+function useCost(model, u) {   // ドル
+  const p = PRICE[model] || PRICE[Object.keys(PRICE).find(k => String(model).startsWith(k))] || PRICE['claude-haiku-5-5'];
+  return ((u.i || 0) * p.i + (u.o || 0) * p.o + (u.cr || 0) * p.i * 0.1 + (u.cw || 0) * p.i * 1.25) / 1e6;
+}
+function useMonth(t) { const d = new Date(t); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); }
+function recordUsage(model, kind, usage, failed) {
+  if (!usage) return;
+  const U = S.usage = S.usage || { log: [], months: {}, since: Date.now() };
+  const e = { t: Date.now(), m: model, k: kind, i: usage.input_tokens || 0, o: usage.output_tokens || 0, cr: usage.cache_read_input_tokens || 0, cw: usage.cache_creation_input_tokens || 0 };
+  if (failed) e.f = 1;
+  e.usd = useCost(model, e);
+  U.log.push(e); if (U.log.length > 3000) U.log.splice(0, U.log.length - 3000);   // 細かい記録は、新しい3000件まで（合計は months に残る）
+  const M = U.months[useMonth(e.t)] = U.months[useMonth(e.t)] || {}, a = M[kind] = M[kind] || { n: 0, i: 0, o: 0, usd: 0 };
+  a.n++; a.i += e.i + e.cr + e.cw; a.o += e.o; a.usd += e.usd;
+  save();
+}
+function yen(usd) { const r = +(S.settings.fx || 150); const v = usd * r; return v < 1 ? v.toFixed(2) + '円' : v < 100 ? v.toFixed(1) + '円' : Math.round(v).toLocaleString() + '円'; }
+function tok(n) { return n >= 1e6 ? (n / 1e6).toFixed(2) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'k' : String(n); }
+function useSum(list) { return list.reduce((s, e) => ({ n: s.n + 1, i: s.i + e.i + (e.cr || 0) + (e.cw || 0), o: s.o + e.o, usd: s.usd + e.usd }), { n: 0, i: 0, o: 0, usd: 0 }); }
+let useOpen = false;
+function usageHtml() {
+  const U = S.usage || { log: [], months: {} }, now = new Date(), ym = useMonth(now), M = U.months[ym] || {};
+  const today = useSum(U.log.filter(e => new Date(e.t).toDateString() === now.toDateString()));
+  const mon = Object.values(M).reduce((s, a) => ({ n: s.n + a.n, i: s.i + a.i, o: s.o + a.o, usd: s.usd + a.usd }), { n: 0, i: 0, o: 0, usd: 0 });
+  const all = Object.values(U.months).flatMap(m => Object.values(m)).reduce((s, a) => ({ n: s.n + a.n, usd: s.usd + a.usd }), { n: 0, usd: 0 });
+  const day = now.getDate(), days = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const g = M['英文づくり'] || { n: 0, usd: 0 }, ex = M['単語・文法の解説'] || { usd: 0 }, sv = M['SVOC'] || { usd: 0 };
+  const per = g.n ? (g.usd + ex.usd + sv.usd) / g.n : 0;
+  const box = (t, s) => `<div class="ubox"><div class="sub" style="font-weight:700">${t}</div><b>${yen(s.usd)}</b><div class="sub">${s.n}回・入力${tok(s.i)}／出力${tok(s.o)}</div></div>`;
+  const rows = Object.entries(M).sort((a, b) => b[1].usd - a[1].usd).map(([k, a]) => `<tr><td>${esc(k)}</td><td>${a.n}</td><td>${tok(Math.round(a.i / a.n))}／${tok(Math.round(a.o / a.n))}</td><td>${yen(a.usd)}</td></tr>`).join('');
+  return `<div class="card"><div style="display:flex;justify-content:space-between;align-items:center"><b style="font:700 calc(var(--fs,1)*17px) var(--font-heading)">Claudeの使用量</b><button class="linkbtn" onclick="useOpen=!useOpen;render()">${useOpen ? 'とじる' : 'くわしく'}</button></div>
+    <p class="sub" style="margin:6px 0 10px">英文づくりなどで使った「トークン」と、料金のめやすです（この端末で使った分）。</p>
+    <div class="ugrid">${box('今日', today)}${box('今月', mon)}</div>
+    <p class="sub" style="font-weight:700;margin:10px 0 0">今月の見込み：${yen(day ? mon.usd / day * days : 0)}${g.n ? `　／　英文1本あたり（解説・SVOCこみ）：${yen(per)}` : ''}</p>
+    ${useOpen ? `<div style="overflow-x:auto;margin-top:12px"><table class="utab"><thead><tr><th>今月の内訳</th><th>回数</th><th>1回の平均<br>入力／出力</th><th>料金</th></tr></thead><tbody>${rows || '<tr><td colspan="4" class="sub">まだ記録がありません</td></tr>'}</tbody></table></div>
+      <p class="sub" style="margin:10px 0 0">これまで：${all.n}回・${yen(all.usd)}（${U.since ? new Date(U.since).toLocaleDateString('ja-JP') + 'から' : ''}）</p>
+      <label>1ドル＝何円で計算するか</label><input type="number" inputmode="decimal" value="${esc(S.settings.fx || 150)}" onchange="S.settings.fx=+this.value||150;save();render()" style="max-width:140px">
+      <p class="sub" style="margin:8px 0 0">料金は、Anthropicの公開価格から計算した<b>めやす</b>です。正確な金額は、Claude Console（Anthropicの管理画面）の請求ページで確かめてください。トークンの数には、Claudeが「考える」ときに使った分もふくまれます。</p>
+      <div class="row" style="margin-top:12px"><button class="btn soft" onclick="usageCsv()">記録をCSVで保存</button><button class="btn ghost" onclick="usageReset()">記録を消す</button></div>` : ''}</div>`;
+}
+function usageCsv() {
+  const L = (S.usage && S.usage.log) || []; if (!L.length) return toast('まだ記録がありません');
+  const csv = 'date,time,model,kind,input_tokens,output_tokens,cache_read,cache_write,usd,failed\n' + L.map(e => { const d = new Date(e.t); return [d.toLocaleDateString('sv-SE'), d.toTimeString().slice(0, 8), e.m, e.k, e.i, e.o, e.cr || 0, e.cw || 0, e.usd.toFixed(6), e.f ? 1 : 0].join(','); }).join('\n');
+  const name = 'claude-usage-' + todayStr() + '.csv';
+  if (NATIVE) return nativeCall('shareFile', { name, text: csv }).catch(() => {});
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv' })); a.download = name; a.click();
+}
+function usageReset() { if (!confirm('使用量の記録を消しますか？（英文や単語帳は消えません）')) return; S.usage = { log: [], months: {}, since: Date.now() }; save(); render(); }
 async function callClaudeJson(system, messages, maxTokens) {
   const c = gcfg(); if (!c.ak) throw new Error('APIキーがありません');
   const r = await fetch('https://api.anthropic.com/v1/messages', {
@@ -670,10 +819,13 @@ async function callClaudeJson(system, messages, maxTokens) {
   });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(r.status === 401 ? 'APIキーが正しくない、または期限切れです' : r.status === 429 ? 'しばらく待ってもう一度（使用量の上限）' : (j.error && j.error.message) || r.status);
+  const raw = (j.content || []).map(b => b.text || '').join(''); let o = null;
+  try { o = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1)); } catch (e) {}
+  const bad = j.stop_reason === 'max_tokens' || !o;
+  try { recordUsage(j.model || c.model || DEFAULT_MODEL, useKind(system, messages), j.usage, bad); } catch (e) {}   // 失敗した返事も、トークンは使っているので記録する
   if (j.stop_reason === 'max_tokens') { const er = new Error('返事が長くなりすぎて途中で切れました'); er.retry = true; throw er; }
-  const raw = (j.content || []).map(b => b.text || '').join('');
-  try { return JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1)); }
-  catch (e) { const er = new Error('返事の形式を読み取れませんでした'); er.retry = true; throw er; }
+  if (!o) { const er = new Error('返事の形式を読み取れませんでした'); er.retry = true; throw er; }
+  return o;
 }
 function jaFor(sent) {   // 英文を1文ずつ訳したデータから、その文の日本語訳を探す
   const e = curEssay(); if (!e || !e.sentences) return ''; const t = sent.trim();
@@ -1133,7 +1285,7 @@ function vSet() {
   const row = (key, icon, title, sub, okk, detail) => `<button class="conn" onclick="sOpen=${sOpen === key ? 'null' : `'${key}'`};render()"><span class="ico">${ic(icon, 22)}</span>
     <span class="ct"><b>${title}</b><span>${sub}</span></span><span class="tag ${okk ? 'ok' : 'todo'}">${okk ? 'つながっています' : 'あと少し'}</span></button>${sOpen === key ? `<div class="cdetail">${detail}</div>` : ''}`;
   const sel = (items, cur, key) => `<select onchange="gset('${key}',this.value)">${Object.entries(items).map(([k, v]) => `<option value="${k}" ${cur === k ? 'selected' : ''}>${v}</option>`).join('')}</select>`;
-  const gDetail = `<label>クライアントID</label><input value="${esc(g.cid || '')}" onchange="gset('cid',this.value.trim());render()" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="xxxx.apps.googleusercontent.com">
+  const gDetail = `${NATIVE ? `<p class="sub" style="margin:0 0 6px">iOSアプリでは、種類が「iOS」のクライアントIDを入れます。${localStorage.getItem(GRTKEY) ? '<button class="linkbtn" onclick="nativeLogout()">Googleのログインを解除</button>' : ''}</p>` : ''}<label>クライアントID</label><input value="${esc(g.cid || '')}" onchange="gset('cid',this.value.trim());render()" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="xxxx.apps.googleusercontent.com">
     <button class="btn soft" style="margin-top:12px" onclick="openWizard(1)">ステップ式の手順を見る</button>`;
   const cDetail = `<label>APIキー</label><input type="password" value="${esc(g.ak || '')}" onchange="gset('ak',this.value.trim());render()" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="sk-ant-...">
     <label>使うモデル</label>${sel(MODELS, g.model || DEFAULT_MODEL, 'model')}<label>英文のやさしさ</label>${sel(LEVELS, g.level || 'hs', 'level')}
@@ -1161,6 +1313,7 @@ function vSet() {
     <label>読み上げの声</label><select onchange="setVoice(this.value)"><option value="">おまかせ（いちばん自然な声）</option>${englishVoices().map(v => `<option value="${esc(v.voiceURI)}" ${S.settings.voice === v.voiceURI ? 'selected' : ''}>${esc(v.name)}（${esc(v.lang)}）</option>`).join('')}</select>
     <button class="btn soft" style="margin-top:10px" onclick="speak('Hello! This is how I sound. Nice to meet you.')">${ic('volume', 20)}聞いてみる</button>
     <p class="sub" style="margin:8px 0 0">いまの声：${voice ? esc(voice.name) : '見つかりません'}。iPhoneは「設定→アクセシビリティ→読み上げコンテンツ→声」で、「拡張」や「プレミアム」の声をダウンロードすると、ぐっと自然になります。</p></div>
+  ${usageHtml()}
   <div class="card"><b style="font:700 calc(var(--fs,1)*17px) var(--font-heading)">学習の考え方</b><p class="sub" style="margin:6px 0 12px">このアプリの工夫が、どんな研究にもとづいているかを、読めます。</p><button class="btn soft" onclick="phil=true;render();window.scrollTo(0,0)">読む</button></div>
   <div class="card"><b style="font:700 calc(var(--fs,1)*17px) var(--font-heading)">バックアップ</b><p class="sub" style="margin:6px 0 12px">データ（日記の本文も含む）はこの端末の中だけにあります。機種変更やブラウザのデータ削除の前に保存しておくと安心です。</p>
     <div class="row"><button class="btn soft" onclick="exportData()">書き出す</button><button class="btn soft" onclick="$('#imp').click()">読み込む</button></div>
@@ -1203,7 +1356,7 @@ function vWizard() {
     ${wiz > 1 ? `<div><button class="linkbtn" onclick="wiz--;render()">← もどる</button></div>` : ''}
     <h1 class="bigtitle">${esc(W.t)}</h1><p class="sub" style="font-size:calc(var(--fs,1)*15px);font-weight:700;margin:0 0 16px">${esc(W.d)}</p>
     <div class="steps">${W.steps.map(([t, s], i) => `<div class="stp">${numBadge(i)}<div><b>${esc(t)}</b>${s ? `<small>${esc(s)}</small>` : ''}</div></div>`).join('')}</div>
-    <input id="winput" type="${W.type}" value="${esc(val)}" placeholder="${esc(W.ph)}" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="off">${W.more}
+    ${NATIVE && wiz === 1 ? '<p class="sub" style="font-weight:700">iOSアプリでは、クライアントIDの種類を「iOS」にして作ります（手順書：docs/iOSアプリの作り方.md）。</p>' : ''}<input id="winput" type="${W.type}" value="${esc(val)}" placeholder="${esc(W.ph)}" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="off">${W.more}
     <div class="bottom stack"><button class="btn" onclick="wizNext()">${wiz < 3 ? 'つぎへ' : '完了'}</button><button class="btn ghost" onclick="wizLater()">あとで設定する</button></div></div>`;
 }
 
@@ -1710,7 +1863,7 @@ function buildListen(scope) {
   });
   return { items, E };
 }
-async function wakeOn() { try { if ('wakeLock' in navigator && !wakeLock) { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener && wakeLock.addEventListener('release', () => { wakeLock = null; }); } } catch (e) { wakeLock = null; } }
+async function wakeOn() { if (NATIVE) return; try { if ('wakeLock' in navigator && !wakeLock) { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener && wakeLock.addEventListener('release', () => { wakeLock = null; }); } } catch (e) { wakeLock = null; } }
 function wakeOff() { try { if (wakeLock) wakeLock.release(); } catch (e) {} wakeLock = null; }
 function lisStart(scope) {
   if (!('speechSynthesis' in window)) return toast('この端末は音声に未対応です');
@@ -1721,6 +1874,7 @@ function lisPlay() { if (!lis) return; if (lis.i >= lis.items.length) lis.i = 0;
 function lisStep(run) {
   if (!lis || lis.run !== run || !lis.playing) return;
   if (lis.i >= lis.items.length) { lis.playing = false; wakeOff(); updateLis(); toast('聞き流し、おわりました'); return; }
+  if (NATIVE) return lisNative();
   const it = lis.items[lis.i], ja = it.lang === 'ja'; updateLis();
   speak(it.text, { fromLis: true, lang: ja ? 'ja-JP' : 'en-US', voice: ja ? jaVoiceObj() : null, rate: ja ? 1.05 : S.settings.rate, onend: () => {
     if (!lis || lis.run !== run || !lis.playing) return;
@@ -1750,7 +1904,7 @@ function lisSetOpt(k, v) {   // 流し方を変えたら、いまの英文の、
 }
 function lisClose() { lisPause(); lis = null; lisView = false; render(); }
 document.addEventListener('visibilitychange', () => {   // 画面がもどったら、止まっていた部分から再開
-  if (!document.hidden && lis && lis.playing) { wakeOn(); clearTimeout(lis.timer); lis.run = Date.now(); lisStep(lis.run); }
+  if (!NATIVE && !document.hidden && lis && lis.playing) { wakeOn(); clearTimeout(lis.timer); lis.run = Date.now(); lisStep(lis.run); }
 });
 function updateLis() {
   const el = $('#lisbox'); if (el) el.outerHTML = lisBoxHtml();
@@ -1808,11 +1962,13 @@ function gTokClear() { gTok = null; gTokExp = 0; try { localStorage.removeItem(G
 function gTokValid() { return !!gTok && Date.now() < gTokExp - 60000; }
 // ボタンを押した瞬間にログイン画面を開けるよう、部品は先に読み込んでおく（スマホは押した直後でないと窓が開かないため）
 function preloadGoogle() {
+  if (NATIVE) { gReady = true; return; }   // iOSアプリは、Googleの部品を読み込まない
   if (gReady || _sc.loading) return; _sc.loading = true;
   loadScript('https://accounts.google.com/gsi/client').then(() => { gReady = true; if (tab === 'diary') render(); }).catch(() => { _sc.loading = false; });
 }
 // silent=true（自動の確認）のときは、ログイン画面を開かない。通行証がなければ、あとでタップしてもらう
 function getToken(cid, silent) {
+  if (NATIVE) return nativeToken(cid, silent);   // iOSアプリ
   return new Promise((ok, ng) => {
     if (gTokValid()) return ok(gTok);
     if (silent) return ng(new Error('needTap'));
@@ -2000,7 +2156,7 @@ async function autoDiary(manual) {
     preloadGoogle(); for (let i = 0; i < 50 && !gReady; i++) await sleep(200);
     if (!gReady) return autoStatus('Googleの部品を読み込めませんでした', false);
     try { await Promise.race([getToken(c.cid, !manual), sleep(20000).then(() => { throw new Error('時間切れ'); })]); }
-    catch (e) { return autoStatus(manual ? 'Googleにログインできませんでした' : '前回のログインから1時間たったので、確認にはログインが必要です', true); }   // 自動ではログイン画面を開かない。タップしてもらう
+    catch (e) { return autoStatus(manual ? 'Googleにログインできませんでした' : NATIVE ? 'Googleのログインが必要です' : '前回のログインから1時間たったので、確認にはログインが必要です', true); }   // 自動ではログイン画面を開かない。タップしてもらう
     const kinds = "(mimeType='application/vnd.google-apps.document' or mimeType='text/plain' or mimeType='text/markdown')";
     const q = "'" + c.folder + "' in parents and trashed=false and " + kinds;
     const r = await fetch('https://www.googleapis.com/drive/v3/files?pageSize=10&orderBy=modifiedTime%20desc&fields=files(id,name,mimeType,modifiedTime)&q=' + encodeURIComponent(q), { headers: { Authorization: 'Bearer ' + gTok } });
@@ -2114,6 +2270,7 @@ function delEssay(id) {
 
 /* ---------- 設定 ---------- */
 function exportData() {
+  if (NATIVE) return nativeCall('shareFile', { name: 'eigo-backup-' + todayStr() + '.json', text: JSON.stringify(S) }).catch(e => toast('保存できませんでした：' + (e.message || e)));   // iOSアプリ：「共有」から保存
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([JSON.stringify(S)], { type: 'application/json' }));
   a.download = 'eigo-backup-' + todayStr() + '.json'; a.click();
@@ -2130,7 +2287,7 @@ if (!S.onboarded && !gcfg().cid && !gcfg().ak && !gcfg().folder && !S.essays.len
 render();
 setTimeout(() => autoDiary(false), 600);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) autoDiary(false); });
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+if (!NATIVE && 'serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 </script>
 </body>
 </html>

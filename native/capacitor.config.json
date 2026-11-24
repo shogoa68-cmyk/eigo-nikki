@@ -1,0 +1,7 @@
+{
+  "appId": "com.example.myeigo",
+  "appName": "マイ英語",
+  "webDir": "www",
+  "ios": { "contentInset": "never", "backgroundColor": "#f5ead8" },
+  "plugins": { "CapacitorHttp": { "enabled": false } }
+}

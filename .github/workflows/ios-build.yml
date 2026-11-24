@@ -1,0 +1,29 @@
+# iOSアプリが組み立てられるか（コンパイルできるか）を、GitHub の Mac で確かめる。署名はしない（iPhone には入れない）
+name: iOS build check
+on:
+  push:
+    paths: ['index.html', 'native/**', '.github/workflows/ios-build.yml']
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install and sync
+        working-directory: native
+        run: |
+          npm ci
+          npm run sync
+      - name: Show Xcode
+        run: xcodebuild -version
+      - name: Build for iOS Simulator (no signing)
+        working-directory: native/ios/App
+        run: |
+          xcodebuild -project App.xcodeproj -scheme App -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO build | tail -80
+          exit ${PIPESTATUS[0]}

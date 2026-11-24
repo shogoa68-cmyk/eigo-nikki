@@ -1,0 +1,19 @@
+{
+  "name": "my-eigo-native",
+  "private": true,
+  "version": "0.1.0",
+  "description": "マイ英語 iOSアプリ（Capacitor）",
+  "scripts": {
+    "copy-web": "node scripts/copy-web.js",
+    "sync": "npm run copy-web && npx cap sync ios",
+    "ios": "npm run sync && npx cap open ios"
+  },
+  "dependencies": {
+    "@capacitor/core": "^8.6.2",
+    "@capacitor/ios": "^8.6.2",
+    "my-eigo-native": "file:./plugins/my-eigo-native"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.6.2"
+  }
+}

@@ -404,6 +404,8 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 .ugrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .ubox{background:var(--color-bg);border-radius:var(--radius-md);padding:12px 14px}.ubox b{display:block;font:700 calc(var(--fs,1)*24px) var(--font-heading);margin:2px 0}
 .utab{width:100%;border-collapse:collapse;font-size:calc(var(--fs,1)*13px)}.utab th,.utab td{text-align:left;padding:7px 6px;border-bottom:1px solid var(--color-neutral-200);vertical-align:top}.utab th{font-weight:700;color:var(--color-neutral-700)}.utab td:nth-child(n+2){white-space:nowrap}
+.citem{border-bottom:1px solid var(--color-neutral-300);border-radius:10px;transition:background .2s}.citem:last-child{border-bottom:0}
+.citem.now{background:var(--color-accent-200)}
 </style>
 </head>
 <body>
@@ -573,11 +575,12 @@ function pickVoice() {
 function setVoice(v) { S.settings.voice = v; save(); pickVoice(); render(); }
 if ('speechSynthesis' in window) { pickVoice(); speechSynthesis.onvoiceschanged = () => { pickVoice(); try { if (tab === 'set') render(); } catch (e) {} }; }
 const PL = { key: null, pos: 0, token: 0, playing: false };   // 読み上げの状態：どの文章を、どこまで読んだか（token は「古い読み上げ」の合図を無視するための番号）
-function stopSpeech() { stopShadow(); lisPause(); cutStop(); PL.token++; PL.playing = false; if ('speechSynthesis' in window) speechSynthesis.cancel(); }
+function stopSpeech() { if (cpOn) { cpOn = false; cpRun++; candMark(-1); } stopShadow(); lisPause(); cutStop(); PL.token++; PL.playing = false; if ('speechSynthesis' in window) speechSynthesis.cancel(); }
 function speak(text, opts = {}) {
   if (!('speechSynthesis' in window)) return toast('この端末は音声に未対応です');
   if (!opts.fromLis && lis && lis.playing) lisPause();   // ほかの読み上げを始めたら、聞き流し・シャドーイングは止める
   if (!opts.fromSh && sh) stopShadow();
+  if (!opts.fromCp && cpOn) { cpOn = false; cpRun++; candMark(-1); }   // まとめて聞いている途中に、ほかを読み上げたら止める
   if (!opts.fromCut && cut && cut.playing) cutStop();
   PL.token++; PL.playing = false; speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text);
@@ -828,8 +831,8 @@ async function callClaudeJson(system, messages, maxTokens) {
   return o;
 }
 function jaFor(sent) {   // 英文を1文ずつ訳したデータから、その文の日本語訳を探す
-  const e = curEssay(); if (!e || !e.sentences) return ''; const t = sent.trim();
-  const m = e.sentences.find(s => s.en.trim() === t || (t.length > 8 && (s.en.includes(t) || t.includes(s.en.trim()))));
+  const e = curEssay(); if (!e || !e.sentences) return ''; const t = sent.trim().toLowerCase();   // 大文字・小文字はくらべない
+  const m = e.sentences.find(s => { const en = s.en.trim().toLowerCase(); return en === t || (t.length > 8 && (en.includes(t) || t.includes(en))); });
   return m ? m.ja : '';
 }
 function tapWord(k) {   // 英文タブ：本文の中の単語
@@ -1059,12 +1062,35 @@ function grammarHtml() {
   return e.grammar.map((g, i) => `<div class="gcard c${i % 4 + 1}"><div class="gh">${numBadge(i)}<span>${esc(g.point)}</span></div>
     ${g.form ? `<div class="form">形：${esc(g.form)}</div>` : ''}<div class="gex">${hlText(g.example || '', [{ m: g.mark, i }])}</div><div class="gexp">${esc(g.explain)}</div></div>`).join('');
 }
+// 読む画面の「単語」タブ：単語と例文を、1つずつ・まとめて読み上げる
+var cpOn = false, cpRun = 0;   // まとめて聞いている途中か
+function candPlayAll() {
+  if (cpOn) { stopSpeech(); return; }
+  const e = curEssay(); if (!e || !e.words.length) return;
+  const list = e.words.flatMap((w, i) => [[w.word, i], ...(w.example ? [[w.example, i]] : [])]);
+  stopSpeech(); cpOn = true; const run = ++cpRun; let k = 0; candMark(-1);
+  const next = () => {
+    if (!cpOn || run !== cpRun) return;
+    if (k >= list.length) { cpOn = false; candMark(-1); return; }
+    const [t, i] = list[k++]; candMark(i); let tok;
+    speak(t, { fromCp: true, onend: () => { if (cpOn && run === cpRun && tok === PL.token) setTimeout(() => { if (tok === PL.token) next(); }, 600); } });   // 単語と例文の間に、少し間をあける
+    tok = PL.token;
+  };
+  next();
+}
+function candMark(i) {   // いま読んでいる単語に色をつける・ボタンの表示
+  document.querySelectorAll('.citem').forEach((el, k) => el.classList.toggle('now', k === i));
+  const b = $('#cpall'); if (b) b.innerHTML = cpOn ? `${ic('stop', 18)}止める` : `${ic('volume', 18)}まとめて聞く（単語 → 例文）`;
+}
 function candHtml() {
   const e = curEssay(); if (!e) return '';
   if (!e.words.length) return e.explained ? `<div class="rpanel"><p class="sub" style="margin:0">この英文から選んだ単語はありません（すでに単語帳にある単語は、候補に出しません）。</p></div>` : '';
-  const n = e.words.filter(w => w.added).length;
-  return `<div class="rpanel"><p class="sub" style="margin:0 0 6px;font-weight:700">${n ? n + '語を単語帳に入れました' : '気になる単語を、単語帳に入れましょう'}</p>${e.words.map((w, i) => `<div class="item" style="align-items:center"><div style="min-width:0"><div class="wd">${esc(w.word)}</div><div class="mn">${esc(w.meaning)}</div>${w.note ? `<div class="sub">${esc(w.note)}</div>` : ''}</div>
-    ${w.added ? `<button class="btn soft" style="width:auto;flex:none;padding:8px 16px" onclick="removeCand(${i})">${ic('check', 18)}入れた</button>` : `<button class="btn" style="width:auto;flex:none;padding:8px 16px" onclick="addCand(${i})">${ic('plus', 18)}入れる</button>`}</div>`).join('')}</div>`;
+  const n = e.words.filter(w => w.added).length, sp = t => `data-t="${esc(t)}" onclick="speak(this.dataset.t)"`;
+  return `<div class="rpanel"><p class="sub" style="margin:0 0 10px;font-weight:700">${n ? n + '語を単語帳に入れました' : '気になる単語を、単語帳に入れましょう'}</p>
+    <button class="btn soft" id="cpall" style="margin-bottom:6px" onclick="candPlayAll()">${cpOn ? `${ic('stop', 18)}止める` : `${ic('volume', 18)}まとめて聞く（単語 → 例文）`}</button>
+    ${e.words.map((w, i) => { const ja = w.example ? jaFor(w.example) : ''; return `<div class="citem"><div class="item" style="align-items:center;border:0;padding-bottom:4px"><div style="min-width:0;display:flex;gap:6px;align-items:flex-start"><button class="iconbtn sm" ${sp(w.word)} aria-label="単語を聴く" style="flex:none;margin-top:2px">${ic('volume', 18)}</button><div style="min-width:0"><div class="wd">${esc(w.word)}</div><div class="mn">${esc(w.meaning)}</div>${w.note ? `<div class="sub">${esc(w.note)}</div>` : ''}</div></div>
+    ${w.added ? `<button class="btn soft" style="width:auto;flex:none;padding:8px 16px" onclick="removeCand(${i})">${ic('check', 18)}入れた</button>` : `<button class="btn" style="width:auto;flex:none;padding:8px 16px" onclick="addCand(${i})">${ic('plus', 18)}入れる</button>`}</div>
+    ${w.example ? `<div class="exbox sm" style="margin:0 0 12px"><div class="exl"><span>${esc(w.example)}</span><button class="iconbtn sm" ${sp(w.example)} aria-label="例文を聴く">${ic('volume', 16)}</button></div>${ja ? `<div class="ja">${esc(ja)}</div>` : ''}</div>` : ''}</div>`; }).join('')}</div>`;
 }
 let rq = '';   // 過去の英文の検索
 function openPast() { stopSpeech(); sheet = null; tab = 'read'; session = null; rlist = true; rq = ''; render(); window.scrollTo(0, 0); }
